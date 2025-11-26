@@ -9,12 +9,16 @@ import {
   COLORS,
   BlockColor,
   HIGHLIGHT,
+  COMBO_NOTIFICATION,
+  HOME_SCREEN,
+  GAME_OVER_LAYOUT,
 } from '../data/constants';
 import { Grid, GridCell } from '../core/Grid';
 import { Block } from '../core/Block';
 import { getShapeBounds } from '../data/figures';
 import { Point } from '../utils/math';
 import { lighten, darken, toRgba } from '../utils/colors';
+import { getComboFontFamily } from '../utils/fontLoader';
 
 export interface RenderState {
   grid: Grid;
@@ -189,9 +193,6 @@ export class Renderer {
     ctx.shadowBlur = 4;
     ctx.shadowOffsetX = 2;
     ctx.shadowOffsetY = 2;
-
-    // Crown icon above "BEST" label
-    this.renderCrown(rightX - 30, labelY - 22, 18);
 
     // "BEST" label (right aligned)
     ctx.textAlign = 'right';
@@ -617,34 +618,191 @@ export class Renderer {
     this.ctx.restore();
   }
 
-  // Render combo notification
+  // Render combo notification with styled text and starburst VFX
   public renderComboNotification(
-    message: string,
+    comboNumber: number,
     y: number,
     scale: number = 1.0,
     opacity: number = 1.0,
+    starburstScale: number = 1.0,
     rotation: number = 0
   ): void {
-    if (!message) return;
+    if (comboNumber < 2) return;
 
-    this.ctx.save();
-    this.ctx.globalAlpha = opacity;
-    this.ctx.translate(VIEWPORT_WIDTH / 2, y);
-    this.ctx.rotate(rotation);
-    this.ctx.scale(scale, scale);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.translate(VIEWPORT_WIDTH / 2, y);
+    ctx.scale(scale, scale);
 
-    // Text shadow
-    this.ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    this.ctx.shadowBlur = 4;
-    this.ctx.shadowOffsetY = 2;
+    // Measure text widths for positioning
+    const comboText = 'Combo';
+    const numberText = comboNumber.toString();
 
-    this.ctx.fillStyle = message.includes('COMBO') ? COLORS.Gold : COLORS.TextPrimary;
-    this.ctx.font = 'bold 48px Inter, sans-serif';
-    this.ctx.textAlign = 'center';
-    this.ctx.textBaseline = 'middle';
-    this.ctx.fillText(message, 0, 0);
+    ctx.font = `italic bold ${COMBO_NOTIFICATION.COMBO_FONT_SIZE}px ${getComboFontFamily()}`;
+    const comboWidth = ctx.measureText(comboText).width;
 
-    this.ctx.restore();
+    ctx.font = `italic bold ${COMBO_NOTIFICATION.NUMBER_FONT_SIZE}px ${getComboFontFamily()}`;
+    const numberWidth = ctx.measureText(numberText).width;
+
+    const gap = 8;
+    const totalWidth = comboWidth + gap + numberWidth;
+    const comboX = -totalWidth / 2 + comboWidth / 2;
+    const numberX = totalWidth / 2 - numberWidth / 2;
+
+    // 1. Draw starburst VFX behind number (with pulsing scale, opacity, and rotation)
+    this.drawStarburst(numberX, 0, starburstScale, opacity, rotation);
+
+    // 2. Draw "Combo" text (3-layer: dark blue stroke, cyan fill, white highlight)
+    this.drawStyledText(
+      comboText,
+      comboX,
+      0,
+      COMBO_NOTIFICATION.COMBO_FONT_SIZE,
+      COMBO_NOTIFICATION.COMBO_FILL_COLOR,        // Layer 2: Cyan fill
+      COMBO_NOTIFICATION.COMBO_STROKE_COLOR,      // Layer 1: Dark blue stroke
+      COMBO_NOTIFICATION.COMBO_HIGHLIGHT_COLOR    // Layer 3: White highlight
+    );
+
+    // 3. Draw number (3-layer: dark blue stroke, gold gradient fill, light yellow highlight)
+    this.drawStyledText(
+      numberText,
+      numberX,
+      0,
+      COMBO_NOTIFICATION.NUMBER_FONT_SIZE,
+      { top: COMBO_NOTIFICATION.NUMBER_FILL_TOP, bottom: COMBO_NOTIFICATION.NUMBER_FILL_BOTTOM },
+      COMBO_NOTIFICATION.NUMBER_STROKE_COLOR,     // Layer 1: Dark blue stroke
+      COMBO_NOTIFICATION.NUMBER_HIGHLIGHT_COLOR   // Layer 3: Light yellow highlight
+    );
+
+    ctx.restore();
+  }
+
+  // Draw starburst rays effect - soft glow with WHITE rays
+  private drawStarburst(x: number, y: number, pulseScale: number, opacity: number = 1, rotation: number = 0): void {
+    const ctx = this.ctx;
+    const rays = COMBO_NOTIFICATION.STARBURST_RAYS;
+    const innerRadius = COMBO_NOTIFICATION.STARBURST_INNER_RADIUS * pulseScale;
+    const outerRadius = COMBO_NOTIFICATION.STARBURST_OUTER_RADIUS * pulseScale;
+    const glowRadius = COMBO_NOTIFICATION.STARBURST_GLOW_LAYER_RADIUS * pulseScale;
+    const rayOpacity = COMBO_NOTIFICATION.STARBURST_RAY_OPACITY;
+    const glowOpacity = COMBO_NOTIFICATION.STARBURST_GLOW_LAYER_OPACITY;
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    // LAYER 1: Soft radial glow halo (drawn BEFORE rays, no rotation)
+    const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, glowRadius);
+    glowGradient.addColorStop(0, `rgba(255, 255, 255, ${glowOpacity * opacity})`);
+    glowGradient.addColorStop(0.5, `rgba(255, 255, 255, ${glowOpacity * 0.5 * opacity})`);
+    glowGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = glowGradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Apply rotation for rays only
+    ctx.rotate(rotation);
+
+    // LAYER 2: Soft rays with reduced opacity
+    // Create gradient with 50% reduced opacity values
+    const gradient = ctx.createRadialGradient(0, 0, innerRadius, 0, 0, outerRadius);
+    gradient.addColorStop(0, `rgba(255, 255, 255, ${rayOpacity * opacity})`);
+    gradient.addColorStop(0.4, `rgba(255, 255, 255, ${0.30 * opacity})`);
+    gradient.addColorStop(0.7, `rgba(255, 255, 255, ${0.125 * opacity})`);
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    ctx.fillStyle = gradient;
+
+    // Draw alternating long and short rays (wider for softer appearance)
+    for (let i = 0; i < rays * 2; i++) {
+      const angle = (i * Math.PI) / rays;
+      const isLong = i % 2 === 0;
+      const rayLength = isLong ? outerRadius : outerRadius * 0.6;
+      const rayWidth = isLong ? 0.20 : 0.12;  // Wider rays for softer look (was 0.12 : 0.06)
+
+      ctx.beginPath();
+      ctx.moveTo(
+        Math.cos(angle - rayWidth) * innerRadius,
+        Math.sin(angle - rayWidth) * innerRadius
+      );
+      ctx.lineTo(
+        Math.cos(angle) * rayLength,
+        Math.sin(angle) * rayLength
+      );
+      ctx.lineTo(
+        Math.cos(angle + rayWidth) * innerRadius,
+        Math.sin(angle + rayWidth) * innerRadius
+      );
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // LAYER 3: Center glow circle (no rotation needed)
+    ctx.rotate(-rotation); // Reset rotation for center glow
+    const centerGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, innerRadius * 2.5);
+    centerGradient.addColorStop(0, `rgba(255, 255, 255, ${0.45 * opacity})`);  // 50% of 0.9
+    centerGradient.addColorStop(0.4, `rgba(255, 255, 255, ${0.25 * opacity})`); // 50% of 0.5
+    centerGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    ctx.fillStyle = centerGradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, innerRadius * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Draw styled text with 3-layer system: stroke -> fill -> highlight
+  private drawStyledText(
+    text: string,
+    x: number,
+    y: number,
+    fontSize: number,
+    fillColor: string | { top: string; bottom: string },
+    strokeColor: string,
+    highlightColor: string,
+    strokeWidth: number = COMBO_NOTIFICATION.STROKE_WIDTH,
+    fontFamily: string = getComboFontFamily()
+  ): void {
+    const ctx = this.ctx;
+
+    ctx.save();
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // LAYER 1: Dark blue outer stroke (creates border/depth)
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = strokeWidth;
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.strokeText(text, x, y);
+
+    // LAYER 2: Main color fill (cyan for Combo, gold gradient for number)
+    if (typeof fillColor === 'object') {
+      const gradient = ctx.createLinearGradient(x, y - fontSize / 2, x, y + fontSize / 2);
+      gradient.addColorStop(0, fillColor.top);
+      gradient.addColorStop(1, fillColor.bottom);
+      ctx.fillStyle = gradient;
+    } else {
+      ctx.fillStyle = fillColor;
+    }
+    ctx.fillText(text, x, y);
+
+    // LAYER 3: White/light inner highlight (glossy shine on top portion)
+    const highlightGradient = ctx.createLinearGradient(
+      x, y - fontSize / 2,      // Start at top of text
+      x, y + fontSize / 6       // Fade out ~1/3 down
+    );
+    highlightGradient.addColorStop(0, highlightColor);
+    highlightGradient.addColorStop(0.4, 'rgba(255, 255, 255, 0.4)');
+    highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    ctx.fillStyle = highlightGradient;
+    ctx.fillText(text, x, y);
+
+    ctx.restore();
   }
 
   // Helper: Draw rounded rectangle path
@@ -667,48 +825,102 @@ export class Renderer {
     const ctx = this.ctx;
     this.clear();
 
-    // Title with text shadow
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 3;
+    // Title "BLOCK PUZZLE" with 3-layer styled text
+    this.drawStyledText(
+      'BLOCK',
+      VIEWPORT_WIDTH / 2,
+      160,
+      HOME_SCREEN.TITLE_FONT_SIZE,
+      { top: HOME_SCREEN.TITLE_FILL_TOP, bottom: HOME_SCREEN.TITLE_FILL_BOTTOM },
+      HOME_SCREEN.TITLE_STROKE_COLOR,
+      HOME_SCREEN.TITLE_HIGHLIGHT_COLOR,
+      HOME_SCREEN.TITLE_STROKE_WIDTH,
+      'Inter, sans-serif'
+    );
 
-    ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = 'bold 56px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('BLOCK', VIEWPORT_WIDTH / 2, 170);
-    ctx.fillText('PUZZLE', VIEWPORT_WIDTH / 2, 235);
-    ctx.restore();
+    this.drawStyledText(
+      'PUZZLE',
+      VIEWPORT_WIDTH / 2,
+      220,
+      HOME_SCREEN.TITLE_FONT_SIZE,
+      { top: HOME_SCREEN.TITLE_FILL_TOP, bottom: HOME_SCREEN.TITLE_FILL_BOTTOM },
+      HOME_SCREEN.TITLE_STROKE_COLOR,
+      HOME_SCREEN.TITLE_HIGHLIGHT_COLOR,
+      HOME_SCREEN.TITLE_STROKE_WIDTH,
+      'Inter, sans-serif'
+    );
 
-    // High score with crown
+    // High score badge
     if (highScore > 0) {
       ctx.save();
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetX = 1;
-      ctx.shadowOffsetY = 2;
+      ctx.font = `bold 22px Inter, sans-serif`;
+      const scoreText = highScore.toLocaleString();
+      const textWidth = ctx.measureText(scoreText).width;
+      const crownSize = 22;
+      const gap = 8;
 
-      // Crown icon
-      this.renderCrown(VIEWPORT_WIDTH / 2 - 80, 295, 28);
+      const badgeWidth = HOME_SCREEN.BADGE_PADDING_X * 2 + crownSize + gap + textWidth;
+      const badgeHeight = HOME_SCREEN.BADGE_PADDING_Y * 2 + 24;
+      const badgeX = (VIEWPORT_WIDTH - badgeWidth) / 2;
+      const badgeY = 275;
+
+      // Badge background
+      ctx.fillStyle = HOME_SCREEN.BADGE_BG;
+      this.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, HOME_SCREEN.BADGE_RADIUS);
+      ctx.fill();
+
+      // Crown and score inside badge
+      const contentX = badgeX + HOME_SCREEN.BADGE_PADDING_X;
+      const contentY = badgeY + badgeHeight / 2;
+      this.renderCrown(contentX, contentY - crownSize / 2, crownSize);
 
       ctx.fillStyle = COLORS.Gold;
-      ctx.font = 'bold 28px Inter, sans-serif';
-      ctx.fillText(highScore.toLocaleString(), VIEWPORT_WIDTH / 2 + 20, 310);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(scoreText, contentX + crownSize + gap, contentY);
       ctx.restore();
     }
 
     // Preview grid with container
     this.renderGridPreviewContainer();
 
-    // Tap to start with pulsing hint
+    // START button
+    const buttonX = (VIEWPORT_WIDTH - HOME_SCREEN.BUTTON_WIDTH) / 2;
+    const buttonY = 820;
+
+    // Button gradient fill
+    const btnGradient = ctx.createLinearGradient(
+      buttonX,
+      buttonY,
+      buttonX,
+      buttonY + HOME_SCREEN.BUTTON_HEIGHT
+    );
+    btnGradient.addColorStop(0, HOME_SCREEN.BUTTON_GRADIENT_TOP);
+    btnGradient.addColorStop(1, HOME_SCREEN.BUTTON_GRADIENT_BOTTOM);
+
+    // Draw button shape
     ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 3;
-    ctx.fillStyle = COLORS.TextSecondary;
-    ctx.font = '22px Inter, sans-serif';
-    ctx.fillText('Tap to Start', VIEWPORT_WIDTH / 2, 850);
+    this.roundRect(
+      buttonX,
+      buttonY,
+      HOME_SCREEN.BUTTON_WIDTH,
+      HOME_SCREEN.BUTTON_HEIGHT,
+      HOME_SCREEN.BUTTON_RADIUS
+    );
+    ctx.fillStyle = btnGradient;
+    ctx.fill();
+
+    // Button border
+    ctx.strokeStyle = HOME_SCREEN.BUTTON_STROKE_COLOR;
+    ctx.lineWidth = HOME_SCREEN.BUTTON_STROKE_WIDTH;
+    ctx.stroke();
+
+    // Button text "START"
+    ctx.font = `bold ${HOME_SCREEN.BUTTON_FONT_SIZE}px Inter, sans-serif`;
+    ctx.fillStyle = HOME_SCREEN.BUTTON_TEXT_COLOR;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('START', VIEWPORT_WIDTH / 2, buttonY + HOME_SCREEN.BUTTON_HEIGHT / 2);
     ctx.restore();
   }
 
@@ -948,19 +1160,357 @@ export class Renderer {
     ctx.restore();
   }
 
-  // Get play again button bounds for hit testing
+  // Get play again button bounds for hit testing (for game over screen)
   public getPlayAgainButtonBounds(): { x: number; y: number; width: number; height: number } {
-    const modalWidth = 420;
-    const modalHeight = 380;
-    const modalY = (VIEWPORT_HEIGHT - modalHeight) / 2;
-    const buttonWidth = 220;
-    const buttonHeight = 56;
+    const { BUTTON_WIDTH, BUTTON_HEIGHT, SCREEN_PLAY_BUTTON_Y } = GAME_OVER_LAYOUT;
 
     return {
-      x: (VIEWPORT_WIDTH - buttonWidth) / 2,
-      y: modalY + 285,
-      width: buttonWidth,
-      height: buttonHeight,
+      x: (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
+      y: SCREEN_PLAY_BUTTON_Y,
+      width: BUTTON_WIDTH,
+      height: BUTTON_HEIGHT,
+    };
+  }
+
+  // ========== NEW GAME OVER FLOW METHODS ==========
+
+  // Render "No more space" overlay
+  public renderNoMoreSpaceOverlay(opacity: number): void {
+    const ctx = this.ctx;
+    const { OVERLAY_Y_OFFSET, OVERLAY_BG_HEIGHT, OVERLAY_FONT_SIZE, OVERLAY_BG_OPACITY } = GAME_OVER_LAYOUT;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+
+    // Semi-transparent background strip
+    const bgY = VIEWPORT_HEIGHT / 2 + OVERLAY_Y_OFFSET - OVERLAY_BG_HEIGHT / 2;
+
+    ctx.fillStyle = `rgba(0, 0, 0, ${OVERLAY_BG_OPACITY})`;
+    ctx.fillRect(0, bgY, VIEWPORT_WIDTH, OVERLAY_BG_HEIGHT);
+
+    // Text
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = `bold ${OVERLAY_FONT_SIZE}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('No more space', VIEWPORT_WIDTH / 2, bgY + OVERLAY_BG_HEIGHT / 2);
+
+    ctx.restore();
+  }
+
+  // Render continue modal with block preview
+  public renderContinueModal(previewBlocks: Block[], opacity: number, scale: number): void {
+    const ctx = this.ctx;
+    const { MODAL_WIDTH, MODAL_HEIGHT, MODAL_RADIUS, MODAL_TITLE_FONT_SIZE, BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_RADIUS } = GAME_OVER_LAYOUT;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+
+    // Center and scale the modal
+    const modalX = (VIEWPORT_WIDTH - MODAL_WIDTH) / 2;
+    const modalY = (VIEWPORT_HEIGHT - MODAL_HEIGHT) / 2;
+
+    ctx.translate(VIEWPORT_WIDTH / 2, VIEWPORT_HEIGHT / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-VIEWPORT_WIDTH / 2, -VIEWPORT_HEIGHT / 2);
+
+    // Darken background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+
+    // Modal background with shadow
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 8;
+
+    ctx.fillStyle = COLORS.GridBackground;
+    this.roundRect(modalX, modalY, MODAL_WIDTH, MODAL_HEIGHT, MODAL_RADIUS);
+    ctx.fill();
+    ctx.restore();
+
+    // Modal border
+    ctx.strokeStyle = darken(COLORS.GridBackground, 15);
+    ctx.lineWidth = 2;
+    this.roundRect(modalX, modalY, MODAL_WIDTH, MODAL_HEIGHT, MODAL_RADIUS);
+    ctx.stroke();
+
+    // Title "Continue?"
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = `bold ${MODAL_TITLE_FONT_SIZE}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Continue?', VIEWPORT_WIDTH / 2, modalY + 50);
+
+    // Subtitle
+    ctx.fillStyle = COLORS.TextSecondary;
+    ctx.font = '16px Inter, sans-serif';
+    ctx.fillText('Watch an ad to get new blocks:', VIEWPORT_WIDTH / 2, modalY + 90);
+
+    // Block preview
+    this.renderBlockPreview(previewBlocks, modalY + 120);
+
+    // Continue button (green)
+    const continueY = modalY + MODAL_HEIGHT - 130;
+    this.renderButton(
+      (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
+      continueY,
+      BUTTON_WIDTH,
+      BUTTON_HEIGHT,
+      'Continue',
+      COLORS.Green
+    );
+
+    // "No, thanks" text button
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.font = '18px Inter, sans-serif';
+    ctx.fillText('No, thanks', VIEWPORT_WIDTH / 2, modalY + MODAL_HEIGHT - 40);
+
+    ctx.restore();
+  }
+
+  // Render block preview (for continue modal)
+  private renderBlockPreview(blocks: Block[], topY: number): void {
+    const { BLOCK_PREVIEW_SIZE, BLOCK_PREVIEW_CELL_SIZE } = GAME_OVER_LAYOUT;
+    const gap = 30;
+
+    const totalWidth = blocks.length * BLOCK_PREVIEW_SIZE + (blocks.length - 1) * gap;
+    let startX = (VIEWPORT_WIDTH - totalWidth) / 2;
+
+    for (const block of blocks) {
+      const bounds = getShapeBounds(block.shape);
+      const blockWidth = bounds.width * BLOCK_PREVIEW_CELL_SIZE;
+      const blockHeight = bounds.height * BLOCK_PREVIEW_CELL_SIZE;
+      const offsetX = startX + (BLOCK_PREVIEW_SIZE - blockWidth) / 2;
+      const offsetY = topY + (BLOCK_PREVIEW_SIZE - blockHeight) / 2;
+
+      for (const [dx, dy] of block.shape.cells) {
+        const x = offsetX + (dx - bounds.minX) * BLOCK_PREVIEW_CELL_SIZE;
+        const y = offsetY + (dy - bounds.minY) * BLOCK_PREVIEW_CELL_SIZE;
+        this.renderBlock(x, y, BLOCK_PREVIEW_CELL_SIZE, block.color, 1.0);
+      }
+
+      startX += BLOCK_PREVIEW_SIZE + gap;
+    }
+  }
+
+  // Render reusable button
+  private renderButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    text: string,
+    color: string
+  ): void {
+    const ctx = this.ctx;
+    const radius = GAME_OVER_LAYOUT.BUTTON_RADIUS;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 4;
+
+    // Button gradient
+    const gradient = ctx.createLinearGradient(x, y, x, y + height);
+    gradient.addColorStop(0, lighten(color, 10));
+    gradient.addColorStop(1, darken(color, 10));
+
+    ctx.fillStyle = gradient;
+    this.roundRect(x, y, width, height, radius);
+    ctx.fill();
+    ctx.restore();
+
+    // Button border
+    ctx.strokeStyle = lighten(color, 20);
+    ctx.lineWidth = 1;
+    this.roundRect(x, y, width, height, radius);
+    ctx.stroke();
+
+    // Button text
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 2;
+    ctx.shadowOffsetY = 1;
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = 'bold 22px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + width / 2, y + height / 2);
+    ctx.restore();
+  }
+
+  // Render ad placeholder
+  public renderAdPlaceholder(opacity: number): void {
+    const ctx = this.ctx;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+
+    // Full screen dark overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+
+    // "Watching ad..." text
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = 'bold 32px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Watching ad...', VIEWPORT_WIDTH / 2, VIEWPORT_HEIGHT / 2);
+
+    // Placeholder note
+    ctx.font = '18px Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.fillText('(This is a placeholder)', VIEWPORT_WIDTH / 2, VIEWPORT_HEIGHT / 2 + 50);
+
+    ctx.restore();
+  }
+
+  // Render game over screen (full screen)
+  public renderGameOverScreen(state: {
+    titleY: number;
+    titleOpacity: number;
+    displayedScore: number;
+    targetScore: number;
+    bestScore: number;
+    isNewHighScore: boolean;
+    showNewHighScoreBadge: boolean;
+    badgeScale: number;
+    badgeOpacity: number;
+  }): void {
+    const ctx = this.ctx;
+    const {
+      SCREEN_TITLE_Y,
+      SCREEN_TITLE_FONT_SIZE,
+      SCREEN_SCORE_Y,
+      SCREEN_SCORE_FONT_SIZE,
+      SCREEN_BEST_Y,
+      SCREEN_BADGE_Y,
+      SCREEN_PLAY_BUTTON_Y,
+      SCREEN_HOME_BUTTON_Y,
+      BUTTON_WIDTH,
+      BUTTON_HEIGHT,
+    } = GAME_OVER_LAYOUT;
+
+    // Darken background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+
+    // "GAME OVER" title with animation
+    ctx.save();
+    ctx.globalAlpha = state.titleOpacity;
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = `bold ${SCREEN_TITLE_FONT_SIZE}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Add shadow to title
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 3;
+    ctx.fillText('GAME OVER', VIEWPORT_WIDTH / 2, state.titleY);
+    ctx.restore();
+
+    // Score with count-up
+    ctx.save();
+    ctx.fillStyle = state.isNewHighScore ? COLORS.Gold : COLORS.TextPrimary;
+    ctx.font = `bold ${SCREEN_SCORE_FONT_SIZE}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+    ctx.fillText(state.displayedScore.toLocaleString(), VIEWPORT_WIDTH / 2, SCREEN_SCORE_Y);
+    ctx.restore();
+
+    // Best score
+    ctx.fillStyle = COLORS.TextSecondary;
+    ctx.font = '24px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Best: ${state.bestScore.toLocaleString()}`, VIEWPORT_WIDTH / 2, SCREEN_BEST_Y);
+
+    // New high score badge
+    if (state.showNewHighScoreBadge && state.isNewHighScore) {
+      ctx.save();
+      ctx.globalAlpha = state.badgeOpacity;
+      ctx.translate(VIEWPORT_WIDTH / 2, SCREEN_BADGE_Y);
+      ctx.scale(state.badgeScale, state.badgeScale);
+
+      // Badge background
+      const badgeWidth = 220;
+      const badgeHeight = 40;
+      ctx.fillStyle = COLORS.Gold;
+      this.roundRect(-badgeWidth / 2, -badgeHeight / 2, badgeWidth, badgeHeight, 20);
+      ctx.fill();
+
+      // Badge text
+      ctx.fillStyle = '#1a2744';
+      ctx.font = 'bold 18px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('NEW HIGH SCORE!', 0, 0);
+
+      ctx.restore();
+    }
+
+    // Play Again button
+    this.renderButton(
+      (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
+      SCREEN_PLAY_BUTTON_Y,
+      BUTTON_WIDTH,
+      BUTTON_HEIGHT,
+      'PLAY AGAIN',
+      COLORS.Green
+    );
+
+    // Home button (darker/gray)
+    this.renderButton(
+      (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
+      SCREEN_HOME_BUTTON_Y,
+      BUTTON_WIDTH,
+      BUTTON_HEIGHT,
+      'HOME',
+      '#555555'
+    );
+  }
+
+  // Get continue button bounds (for continue modal)
+  public getContinueButtonBounds(): { x: number; y: number; width: number; height: number } {
+    const { MODAL_WIDTH, MODAL_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT } = GAME_OVER_LAYOUT;
+    const modalY = (VIEWPORT_HEIGHT - MODAL_HEIGHT) / 2;
+    const buttonY = modalY + MODAL_HEIGHT - 130;
+
+    return {
+      x: (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
+      y: buttonY,
+      width: BUTTON_WIDTH,
+      height: BUTTON_HEIGHT,
+    };
+  }
+
+  // Get "No, thanks" button bounds (for continue modal)
+  public getNoThanksButtonBounds(): { x: number; y: number; width: number; height: number } {
+    const { MODAL_WIDTH, MODAL_HEIGHT } = GAME_OVER_LAYOUT;
+    const modalY = (VIEWPORT_HEIGHT - MODAL_HEIGHT) / 2;
+
+    return {
+      x: VIEWPORT_WIDTH / 2 - 60,
+      y: modalY + MODAL_HEIGHT - 60,
+      width: 120,
+      height: 40,
+    };
+  }
+
+  // Get home button bounds (for game over screen)
+  public getHomeButtonBounds(): { x: number; y: number; width: number; height: number } {
+    const { BUTTON_WIDTH, BUTTON_HEIGHT, SCREEN_HOME_BUTTON_Y } = GAME_OVER_LAYOUT;
+
+    return {
+      x: (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
+      y: SCREEN_HOME_BUTTON_Y,
+      width: BUTTON_WIDTH,
+      height: BUTTON_HEIGHT,
     };
   }
 }

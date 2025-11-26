@@ -2,6 +2,7 @@
 
 import { EasingFunction, getEasing, easeOutQuad, easeOutBack, easeInQuad, easeInBack } from '../utils/easing';
 import { lerp } from '../utils/math';
+import { COMBO_NOTIFICATION } from '../data/constants';
 
 export interface Animation {
   id: number;
@@ -204,52 +205,79 @@ export class AnimationManager {
     });
   }
 
-  // Combo notification animation
+  // Combo notification animation with zoom-in, pulsing starburst, and rotation
   public animateComboNotification(
-    onUpdate: (y: number, scale: number, opacity: number, rotation: number) => void,
+    onUpdate: (y: number, scale: number, opacity: number, starburstScale: number, rotation: number) => void,
     startY: number,
     onComplete?: () => void
   ): void {
+    const {
+      ZOOM_IN_DURATION,
+      HOLD_DURATION,
+      FADE_DURATION,
+      PULSE_SPEED,
+      PULSE_MIN_SCALE,
+      PULSE_MAX_SCALE,
+      INITIAL_SCALE,
+      STARBURST_ROTATION_DEGREES,
+    } = COMBO_NOTIFICATION;
+
     let y = startY;
-    let scale = 1;
+    let scale = INITIAL_SCALE;
     let opacity = 1;
-    let rotation = 0;
+    let animationStartTime = this.currentTime;
+    const totalDuration = ZOOM_IN_DURATION + HOLD_DURATION + FADE_DURATION;
 
-    // Rise phase (0-200ms)
+    // Helper to calculate pulsing starburst scale based on time
+    const getStarburstScale = (): number => {
+      const elapsed = (this.currentTime - animationStartTime) / 1000; // Convert to seconds
+      const pulsePhase = Math.sin(elapsed * PULSE_SPEED * Math.PI * 2);
+      // Map -1...1 to PULSE_MIN_SCALE...PULSE_MAX_SCALE
+      return lerp(PULSE_MIN_SCALE, PULSE_MAX_SCALE, (pulsePhase + 1) / 2);
+    };
+
+    // Helper to calculate continuous rotation (0 → ROTATION_DEGREES over full animation)
+    const getRotation = (): number => {
+      const elapsed = this.currentTime - animationStartTime;
+      const progress = Math.min(elapsed / totalDuration, 1);
+      return progress * STARBURST_ROTATION_DEGREES * (Math.PI / 180); // Convert to radians
+    };
+
+    // Phase 1: Zoom-in (0 - ZOOM_IN_DURATION)
     this.tween({
-      from: 0,
-      to: 60,
-      duration: 200,
-      easing: easeOutQuad,
+      from: INITIAL_SCALE,
+      to: 1.0,
+      duration: ZOOM_IN_DURATION,
+      easing: easeOutBack, // Bouncy overshoot effect
       onUpdate: (value) => {
-        y = startY - value;
-        onUpdate(y, scale, opacity, rotation);
+        scale = value;
+        onUpdate(y, scale, opacity, getStarburstScale(), getRotation());
       },
     });
 
-    // Hold phase (200-300ms) - just wiggle
-    this.tween({
-      from: 0,
-      to: 3,
-      duration: 100,
-      delay: 200,
-      onUpdate: (value) => {
-        rotation = Math.sin(value * Math.PI * 2) * 0.1;
-        onUpdate(y, scale, opacity, rotation);
-      },
-    });
-
-    // Fade out phase (300-600ms)
+    // Phase 2: Hold (ZOOM_IN_DURATION - ZOOM_IN_DURATION + HOLD_DURATION)
     this.tween({
       from: 0,
       to: 1,
-      duration: 300,
-      delay: 300,
+      duration: HOLD_DURATION,
+      delay: ZOOM_IN_DURATION,
+      onUpdate: () => {
+        // Scale stays at 1.0, just update starburst pulse and rotation
+        onUpdate(y, 1.0, opacity, getStarburstScale(), getRotation());
+      },
+    });
+
+    // Phase 3: Fade out (ZOOM_IN_DURATION + HOLD_DURATION - end)
+    this.tween({
+      from: 0,
+      to: 1,
+      duration: FADE_DURATION,
+      delay: ZOOM_IN_DURATION + HOLD_DURATION,
       easing: easeInQuad,
       onUpdate: (progress) => {
         opacity = 1 - progress;
-        scale = 1 - progress * 0.5;
-        onUpdate(y, scale, opacity, rotation);
+        scale = 1 - progress * 0.2; // Slight shrink during fade
+        onUpdate(y, scale, opacity, getStarburstScale(), getRotation());
       },
       onComplete,
     });

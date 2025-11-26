@@ -1,7 +1,7 @@
 // Main Game Controller
 // Orchestrates all game systems
 
-import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION } from './data/constants';
+import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION, GAME_OVER_FLOW, GAME_OVER_LAYOUT } from './data/constants';
 import { easeOutBack, easeInQuad } from './utils/easing';
 import { Grid } from './core/Grid';
 import { Block } from './core/Block';
@@ -13,15 +13,45 @@ import { DragDropManager } from './input/DragDropManager';
 import { AnimationManager, ScreenShake } from './effects/AnimationManager';
 import { ParticleSystem } from './rendering/ParticleSystem';
 import { Point, pointInRect } from './utils/math';
+import { loadComboFont } from './utils/fontLoader';
 
-export type GameState = 'loading' | 'home' | 'playing' | 'paused' | 'gameover' | 'animating';
+export type GameState =
+  | 'loading'
+  | 'home'
+  | 'playing'
+  | 'paused'
+  | 'gameover_animating'     // Fill animation in progress
+  | 'gameover_overlay'       // "No more space" text showing
+  | 'gameover_continue'      // Continue modal showing
+  | 'gameover_ad'            // Ad placeholder showing
+  | 'gameover_clearing'      // Clearing shadow blocks after continue
+  | 'gameover_screen'        // Final game over screen
+  | 'animating';
 
 interface ComboNotification {
-  message: string;
+  comboNumber: number;
   y: number;
   scale: number;
   opacity: number;
+  starburstScale: number;
   rotation: number;
+}
+
+interface GameOverState {
+  overlayOpacity: number;
+  previewBlocks: Block[];
+  continueModalOpacity: number;
+  continueModalScale: number;
+  adOpacity: number;
+  titleY: number;
+  titleOpacity: number;
+  displayedScore: number;
+  targetScore: number;
+  bestScore: number;
+  isNewHighScore: boolean;
+  showNewHighScoreBadge: boolean;
+  badgeScale: number;
+  badgeOpacity: number;
 }
 
 export class Game {
@@ -51,6 +81,11 @@ export class Game {
   private comboNotification: ComboNotification | null = null;
   private isNewHighScore: boolean = false;
 
+  // Game over flow state
+  private gameOverState: GameOverState | null = null;
+  private hasContinued: boolean = false;  // Only allow continue once per game
+  private shadowCells: Map<string, { scale: number; alpha: number; color: BlockColor }> = new Map();
+
   // Cell animations for line clearing - stores color at animation start to avoid stale reads
   private animatingCells: Map<string, { scale: number; opacity: number; rotation: number; color: BlockColor }> = new Map();
 
@@ -76,6 +111,9 @@ export class Game {
     this.animationManager = new AnimationManager();
     this.screenShake = new ScreenShake();
     this.particleSystem = new ParticleSystem();
+
+    // Lazy load combo font (async, will be ready by first combo)
+    loadComboFont();
 
     // Set up drag drop manager with callbacks
     this.dragDropManager = new DragDropManager(
@@ -149,13 +187,42 @@ export class Game {
 
     if (this.state === 'home') {
       this.startGame();
-    } else if (this.state === 'gameover') {
-      // Check if clicked play again button
-      const buttonBounds = this.renderer.getPlayAgainButtonBounds();
-      if (pointInRect(event.position, buttonBounds)) {
-        this.startGame();
-      }
+    } else if (this.state === 'gameover_continue') {
+      this.handleContinueModalInput(event.position);
+    } else if (this.state === 'gameover_screen') {
+      this.handleGameOverScreenInput(event.position);
     }
+  }
+
+  private handleContinueModalInput(pos: Point): void {
+    const continueBtn = this.renderer.getContinueButtonBounds();
+    const noThanksBtn = this.renderer.getNoThanksButtonBounds();
+
+    if (pointInRect(pos, continueBtn)) {
+      // User wants to continue - show ad
+      this.showAdPlaceholder();
+    } else if (pointInRect(pos, noThanksBtn)) {
+      // User declines - go to game over screen
+      this.showGameOverScreen();
+    }
+  }
+
+  private handleGameOverScreenInput(pos: Point): void {
+    const playAgainBtn = this.renderer.getPlayAgainButtonBounds();
+    const homeBtn = this.renderer.getHomeButtonBounds();
+
+    if (pointInRect(pos, playAgainBtn)) {
+      this.startGame();
+    } else if (pointInRect(pos, homeBtn)) {
+      this.goToHome();
+    }
+  }
+
+  private goToHome(): void {
+    this.state = 'home';
+    this.gameOverState = null;
+    this.shadowCells.clear();
+    this.introAnimCells.clear();
   }
 
   private async startGame(): Promise<void> {
@@ -167,6 +234,11 @@ export class Game {
     this.comboNotification = null;
     this.animatingCells.clear();
     this.introAnimCells.clear();
+
+    // Reset game over flow state
+    this.gameOverState = null;
+    this.hasContinued = false;
+    this.shadowCells.clear();
 
     // Play intro animation BEFORE generating blocks
     this.state = 'animating';
@@ -422,25 +494,31 @@ export class Game {
   }
 
   private showComboNotification(result: ComboResult): void {
-    if (!result.message) return;
+    // Only show for combos (2+ consecutive line clears)
+    if (result.comboStreak < 1) return;
 
     const gridOrigin = this.renderer.getGridOrigin();
     const startY = gridOrigin.y + (GRID_SIZE * CELL_SIZE) / 2;
 
+    // Combo number is streak + 1 (first combo shows "Combo 2")
+    const comboNumber = result.comboStreak + 1;
+
     this.comboNotification = {
-      message: result.message,
+      comboNumber,
       y: startY,
-      scale: 1,
+      scale: 0.3,  // Start small for zoom-in
       opacity: 1,
+      starburstScale: 1,
       rotation: 0,
     };
 
     this.animationManager.animateComboNotification(
-      (y, scale, opacity, rotation) => {
+      (y, scale, opacity, starburstScale, rotation) => {
         if (this.comboNotification) {
           this.comboNotification.y = y;
           this.comboNotification.scale = scale;
           this.comboNotification.opacity = opacity;
+          this.comboNotification.starburstScale = starburstScale;
           this.comboNotification.rotation = rotation;
         }
       },
@@ -468,17 +546,53 @@ export class Game {
   }
 
   private async gameOver(): Promise<void> {
-    this.state = 'animating';
+    this.state = 'gameover_animating';
 
-    // Play game over fill animation
+    // Check for new high score
+    this.isNewHighScore = this.scoreManager.getScore() > this.scoreManager.getHighScore();
+
+    // Initialize game over state
+    this.gameOverState = {
+      overlayOpacity: 0,
+      previewBlocks: [],
+      continueModalOpacity: 0,
+      continueModalScale: GAME_OVER_FLOW.MODAL_INITIAL_SCALE,
+      adOpacity: 0,
+      titleY: -100,
+      titleOpacity: 0,
+      displayedScore: 0,
+      targetScore: this.scoreManager.getScore(),
+      bestScore: this.scoreManager.getHighScore(),
+      isNewHighScore: this.isNewHighScore,
+      showNewHighScoreBadge: false,
+      badgeScale: 0,
+      badgeOpacity: 0,
+    };
+
+    // Phase 1: Fill animation
     await this.playGameOverAnimation();
 
-    this.state = 'gameover';
+    // Phase 2: Show "No more space" overlay
+    this.state = 'gameover_overlay';
+    await this.showNoMoreSpaceOverlay();
+
+    // Phase 3: Show continue modal or go directly to game over screen
+    if (!this.hasContinued) {
+      this.state = 'gameover_continue';
+      await this.showContinueModal();
+      // Wait for user input (handled in handleGlobalInput)
+    } else {
+      // Already used continue - go directly to game over screen
+      await this.showGameOverScreen();
+    }
   }
 
   // ========== GAME OVER ANIMATION ==========
 
   private async playGameOverAnimation(): Promise<void> {
+    // Clear shadow cells for fresh start
+    this.shadowCells.clear();
+
     // Fill empty cells from bottom to top
     for (let row = GRID_SIZE - 1; row >= 0; row--) {
       let filledAny = false;
@@ -496,31 +610,300 @@ export class Game {
       }
     }
 
-    // Wait before showing game over screen
+    // Wait before showing overlay
     await this.animationManager.wait(GAME_OVER_ANIMATION.WAIT_BEFORE_MODAL);
   }
 
   private fillGameOverCell(col: number, row: number): void {
-    const key = `go_${col},${row}`;  // Prefix to avoid collision with intro
+    const key = `${col},${row}`;
     const color = BLOCK_COLORS[Math.floor(Math.random() * BLOCK_COLORS.length)];
 
-    // Add to intro cells (reusing same map) with initial state
-    this.introAnimCells.set(key, { scale: 0, alpha: 0, color });
+    // Add to shadow cells with initial state
+    this.shadowCells.set(key, { scale: 0, alpha: 0, color });
 
-    // Animate to 25% opacity only
+    // Animate to 25% opacity
     this.animationManager.tween({
       from: 0,
       to: 1,
       duration: GAME_OVER_ANIMATION.CELL_DURATION,
       easing: easeOutBack,
       onUpdate: (value) => {
-        const cell = this.introAnimCells.get(key);
+        const cell = this.shadowCells.get(key);
         if (cell) {
           cell.scale = value;
           cell.alpha = value * GAME_OVER_ANIMATION.FINAL_ALPHA;  // Max 0.25
         }
       },
     });
+  }
+
+  // ========== NO MORE SPACE OVERLAY ==========
+
+  private async showNoMoreSpaceOverlay(): Promise<void> {
+    const { OVERLAY_DURATION, OVERLAY_FADE_IN, OVERLAY_FADE_OUT } = GAME_OVER_FLOW;
+
+    // Fade in
+    await new Promise<void>((resolve) => {
+      this.animationManager.tween({
+        from: 0,
+        to: 1,
+        duration: OVERLAY_FADE_IN,
+        onUpdate: (value) => {
+          if (this.gameOverState) {
+            this.gameOverState.overlayOpacity = value;
+          }
+        },
+        onComplete: resolve,
+      });
+    });
+
+    // Hold
+    await this.animationManager.wait(OVERLAY_DURATION - OVERLAY_FADE_IN - OVERLAY_FADE_OUT);
+
+    // Fade out
+    await new Promise<void>((resolve) => {
+      this.animationManager.tween({
+        from: 1,
+        to: 0,
+        duration: OVERLAY_FADE_OUT,
+        onUpdate: (value) => {
+          if (this.gameOverState) {
+            this.gameOverState.overlayOpacity = value;
+          }
+        },
+        onComplete: resolve,
+      });
+    });
+  }
+
+  // ========== CONTINUE MODAL ==========
+
+  private async showContinueModal(): Promise<void> {
+    // Generate preview blocks for continue option
+    const previewBlocks = this.blockGenerator.generateAdContinue(this.grid);
+
+    if (this.gameOverState) {
+      this.gameOverState.previewBlocks = previewBlocks;
+    }
+
+    // Animate modal in
+    const { MODAL_SCALE_IN, MODAL_INITIAL_SCALE } = GAME_OVER_FLOW;
+
+    await Promise.all([
+      new Promise<void>((resolve) => {
+        this.animationManager.tween({
+          from: 0,
+          to: 1,
+          duration: MODAL_SCALE_IN,
+          onUpdate: (value) => {
+            if (this.gameOverState) {
+              this.gameOverState.continueModalOpacity = value;
+            }
+          },
+          onComplete: resolve,
+        });
+      }),
+      new Promise<void>((resolve) => {
+        this.animationManager.tween({
+          from: MODAL_INITIAL_SCALE,
+          to: 1,
+          duration: MODAL_SCALE_IN,
+          easing: easeOutBack,
+          onUpdate: (value) => {
+            if (this.gameOverState) {
+              this.gameOverState.continueModalScale = value;
+            }
+          },
+          onComplete: resolve,
+        });
+      }),
+    ]);
+
+    // Wait for user input (handled in handleGlobalInput)
+  }
+
+  // ========== AD PLACEHOLDER ==========
+
+  private async showAdPlaceholder(): Promise<void> {
+    this.state = 'gameover_ad';
+
+    const { AD_DURATION, AD_FADE_IN, AD_FADE_OUT } = GAME_OVER_FLOW;
+
+    // Fade in
+    await new Promise<void>((resolve) => {
+      this.animationManager.tween({
+        from: 0,
+        to: 1,
+        duration: AD_FADE_IN,
+        onUpdate: (value) => {
+          if (this.gameOverState) {
+            this.gameOverState.adOpacity = value;
+          }
+        },
+        onComplete: resolve,
+      });
+    });
+
+    // Hold (simulating ad)
+    await this.animationManager.wait(AD_DURATION - AD_FADE_IN - AD_FADE_OUT);
+
+    // Fade out
+    await new Promise<void>((resolve) => {
+      this.animationManager.tween({
+        from: 1,
+        to: 0,
+        duration: AD_FADE_OUT,
+        onUpdate: (value) => {
+          if (this.gameOverState) {
+            this.gameOverState.adOpacity = value;
+          }
+        },
+        onComplete: resolve,
+      });
+    });
+
+    // After ad, continue game
+    await this.continueAfterAd();
+  }
+
+  // ========== CONTINUE AFTER AD ==========
+
+  private async continueAfterAd(): Promise<void> {
+    this.state = 'gameover_clearing';
+    this.hasContinued = true;
+
+    // Get the preview blocks before clearing state
+    const newBlocks = this.gameOverState?.previewBlocks || [];
+
+    // Clear shadow blocks with animation
+    await this.clearShadowBlocksAnimation();
+
+    // Give player the new blocks
+    this.dropBlocks = newBlocks;
+    this.dragDropManager.setBlocks(this.dropBlocks);
+
+    // Reset game over state
+    this.gameOverState = null;
+
+    // Return to playing
+    this.state = 'playing';
+  }
+
+  private async clearShadowBlocksAnimation(): Promise<void> {
+    const { SHADOW_CLEAR_ROW_DELAY, SHADOW_CLEAR_CELL_DURATION } = GAME_OVER_FLOW;
+
+    // Clear from top to bottom (reverse of fill)
+    for (let row = 0; row < GRID_SIZE; row++) {
+      let clearedAny = false;
+
+      for (let col = 0; col < GRID_SIZE; col++) {
+        const key = `${col},${row}`;
+        if (this.shadowCells.has(key)) {
+          clearedAny = true;
+          this.animateShadowClear(key, SHADOW_CLEAR_CELL_DURATION);
+        }
+      }
+
+      if (clearedAny) {
+        await this.animationManager.wait(SHADOW_CLEAR_ROW_DELAY);
+      }
+    }
+
+    // Final cleanup - wait for last row animations to complete
+    await this.animationManager.wait(SHADOW_CLEAR_CELL_DURATION);
+    this.shadowCells.clear();
+  }
+
+  private animateShadowClear(key: string, duration: number): void {
+    this.animationManager.tween({
+      from: 1,
+      to: 0,
+      duration,
+      easing: easeInQuad,
+      onUpdate: (value) => {
+        const cell = this.shadowCells.get(key);
+        if (cell) {
+          cell.scale = value;
+          cell.alpha = value * GAME_OVER_ANIMATION.FINAL_ALPHA;
+        }
+      },
+      onComplete: () => {
+        this.shadowCells.delete(key);
+      },
+    });
+  }
+
+  // ========== GAME OVER SCREEN ==========
+
+  private async showGameOverScreen(): Promise<void> {
+    this.state = 'gameover_screen';
+
+    // Update best score in state (high score is auto-saved by ScoreManager during gameplay)
+    if (this.gameOverState) {
+      this.gameOverState.bestScore = this.scoreManager.getHighScore();
+    }
+
+    const { TITLE_DROP_DURATION, SCORE_COUNT_DURATION, HIGH_SCORE_BADGE_DELAY, HIGH_SCORE_BADGE_SCALE_DURATION } = GAME_OVER_FLOW;
+
+    // Animate title drop
+    await new Promise<void>((resolve) => {
+      this.animationManager.tween({
+        from: -100,
+        to: GAME_OVER_LAYOUT.SCREEN_TITLE_Y,
+        duration: TITLE_DROP_DURATION,
+        easing: easeOutBack,
+        onUpdate: (value) => {
+          if (this.gameOverState) {
+            this.gameOverState.titleY = value;
+            this.gameOverState.titleOpacity = 1;
+          }
+        },
+        onComplete: resolve,
+      });
+    });
+
+    // Animate score count-up
+    const targetScore = this.gameOverState?.targetScore || 0;
+    const countDuration = Math.min(SCORE_COUNT_DURATION, Math.max(500, targetScore * 2));
+
+    await new Promise<void>((resolve) => {
+      this.animationManager.tween({
+        from: 0,
+        to: targetScore,
+        duration: countDuration,
+        onUpdate: (value) => {
+          if (this.gameOverState) {
+            this.gameOverState.displayedScore = Math.floor(value);
+          }
+        },
+        onComplete: resolve,
+      });
+    });
+
+    // Show new high score badge if applicable
+    if (this.isNewHighScore && this.gameOverState) {
+      await this.animationManager.wait(HIGH_SCORE_BADGE_DELAY);
+
+      this.gameOverState.showNewHighScoreBadge = true;
+
+      await new Promise<void>((resolve) => {
+        this.animationManager.tween({
+          from: 0,
+          to: 1,
+          duration: HIGH_SCORE_BADGE_SCALE_DURATION,
+          easing: easeOutBack,
+          onUpdate: (value) => {
+            if (this.gameOverState) {
+              this.gameOverState.badgeScale = value;
+              this.gameOverState.badgeOpacity = value;
+            }
+          },
+          onComplete: resolve,
+        });
+      });
+    }
+
+    // Screen is now showing - wait for user input (handled in handleGlobalInput)
   }
 
   private gameLoop(time: number): void {
@@ -560,13 +943,46 @@ export class Game {
         this.renderGameplay();
         break;
 
-      case 'gameover':
+      case 'gameover_animating':
+      case 'gameover_clearing':
         this.renderGameplay();
-        this.renderer.renderGameOver(
-          this.scoreManager.getScore(),
-          this.scoreManager.getHighScore(),
-          this.isNewHighScore
-        );
+        this.renderShadowCells();
+        break;
+
+      case 'gameover_overlay':
+        this.renderGameplay();
+        this.renderShadowCells();
+        if (this.gameOverState) {
+          this.renderer.renderNoMoreSpaceOverlay(this.gameOverState.overlayOpacity);
+        }
+        break;
+
+      case 'gameover_continue':
+        this.renderGameplay();
+        this.renderShadowCells();
+        if (this.gameOverState) {
+          this.renderer.renderContinueModal(
+            this.gameOverState.previewBlocks,
+            this.gameOverState.continueModalOpacity,
+            this.gameOverState.continueModalScale
+          );
+        }
+        break;
+
+      case 'gameover_ad':
+        this.renderGameplay();
+        this.renderShadowCells();
+        if (this.gameOverState) {
+          this.renderer.renderAdPlaceholder(this.gameOverState.adOpacity);
+        }
+        break;
+
+      case 'gameover_screen':
+        this.renderGameplay();
+        this.renderShadowCells();
+        if (this.gameOverState) {
+          this.renderer.renderGameOverScreen(this.gameOverState);
+        }
         break;
     }
 
@@ -602,10 +1018,11 @@ export class Game {
     // Render combo notification
     if (this.comboNotification) {
       this.renderer.renderComboNotification(
-        this.comboNotification.message,
+        this.comboNotification.comboNumber,
         this.comboNotification.y,
         this.comboNotification.scale,
         this.comboNotification.opacity,
+        this.comboNotification.starburstScale,
         this.comboNotification.rotation
       );
     }
@@ -659,6 +1076,31 @@ export class Game {
       this.ctx.translate(-centerX, -centerY);
 
       this.renderer.renderBlock(screenX, screenY, CELL_SIZE, anim.color, anim.alpha);
+
+      this.ctx.restore();
+    });
+  }
+
+  private renderShadowCells(): void {
+    const gridOrigin = this.renderer.getGridOrigin();
+
+    this.shadowCells.forEach((cell, key) => {
+      const [x, y] = key.split(',').map(Number);
+
+      const screenX = gridOrigin.x + x * CELL_SIZE;
+      const screenY = gridOrigin.y + y * CELL_SIZE;
+
+      this.ctx.save();
+      this.ctx.globalAlpha = cell.alpha;
+
+      // Transform from center for scale
+      const centerX = screenX + CELL_SIZE / 2;
+      const centerY = screenY + CELL_SIZE / 2;
+      this.ctx.translate(centerX, centerY);
+      this.ctx.scale(cell.scale, cell.scale);
+      this.ctx.translate(-centerX, -centerY);
+
+      this.renderer.renderBlock(screenX, screenY, CELL_SIZE, cell.color, cell.alpha);
 
       this.ctx.restore();
     });

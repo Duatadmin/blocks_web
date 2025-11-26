@@ -57,8 +57,8 @@ export const PARTICLES = {
 
 // Screen shake
 export const SCREEN_SHAKE = {
-  baseStrength: 3,
-  strengthPerLine: 2, // Additional shake per line
+  baseStrength: 0.75,      // Reduced to 25% (was 3)
+  strengthPerLine: 0.5,    // Reduced to 25% (was 2)
   duration: 300,
 };
 
@@ -171,10 +171,10 @@ export const INPUT = {
 
 // Intro animation (game start)
 export const INTRO_ANIMATION = {
-  ROW_DELAY: 100,           // 0.1s between rows
-  CELL_DURATION: 200,       // 0.2s per cell animation
-  WAIT_AFTER_FILL: 500,     // 0.5s wait after grid is filled
-  WAIT_AFTER_CLEAR: 300,    // 0.3s wait after grid is cleared
+  ROW_DELAY: 70,            // 0.07s between rows
+  CELL_DURATION: 140,       // 0.14s per cell animation
+  WAIT_AFTER_FILL: 350,     // 0.35s wait after grid is filled
+  WAIT_AFTER_CLEAR: 210,    // 0.21s wait after grid is cleared
 };
 
 // Game over animation
@@ -185,9 +185,136 @@ export const GAME_OVER_ANIMATION = {
   WAIT_BEFORE_MODAL: 150,   // 0.15s before showing modal
 };
 
+// Game over flow timing
+export const GAME_OVER_FLOW = {
+  // "No more space" overlay
+  OVERLAY_DURATION: 2000,       // 2 seconds total
+  OVERLAY_FADE_IN: 300,
+  OVERLAY_FADE_OUT: 300,
+
+  // Continue modal
+  MODAL_SCALE_IN: 300,
+  MODAL_INITIAL_SCALE: 0.8,
+
+  // Ad placeholder
+  AD_DURATION: 2000,            // 2 seconds
+  AD_FADE_IN: 300,
+  AD_FADE_OUT: 300,
+
+  // Shadow clear animation (after continue)
+  SHADOW_CLEAR_ROW_DELAY: 100,
+  SHADOW_CLEAR_CELL_DURATION: 200,
+
+  // Game over screen animations
+  TITLE_DROP_DURATION: 500,
+  SCORE_COUNT_DURATION: 1500,
+  HIGH_SCORE_BADGE_DELAY: 500,
+  HIGH_SCORE_BADGE_SCALE_DURATION: 300,
+};
+
+// Game over UI layout
+export const GAME_OVER_LAYOUT = {
+  // "No more space" overlay
+  OVERLAY_Y_OFFSET: 254,        // From center
+  OVERLAY_BG_HEIGHT: 168,
+  OVERLAY_FONT_SIZE: 36,
+  OVERLAY_BG_OPACITY: 0.8,
+
+  // Continue modal
+  MODAL_WIDTH: 400,
+  MODAL_HEIGHT: 380,
+  MODAL_RADIUS: 24,
+  MODAL_TITLE_FONT_SIZE: 28,
+  BLOCK_PREVIEW_SIZE: 70,
+  BLOCK_PREVIEW_CELL_SIZE: 16,
+
+  // Buttons (shared)
+  BUTTON_WIDTH: 180,
+  BUTTON_HEIGHT: 48,
+  BUTTON_RADIUS: 12,
+
+  // Game over screen
+  SCREEN_TITLE_Y: 200,
+  SCREEN_TITLE_FONT_SIZE: 52,
+  SCREEN_SCORE_Y: 350,
+  SCREEN_SCORE_FONT_SIZE: 72,
+  SCREEN_BEST_Y: 420,
+  SCREEN_BADGE_Y: 490,
+  SCREEN_PLAY_BUTTON_Y: 600,
+  SCREEN_HOME_BUTTON_Y: 680,
+};
+
 // Modal animation
 export const MODAL_ANIMATION = {
   SHOW_DURATION: 300,       // 0.3s
   HIDE_DURATION: 200,       // 0.2s
   INITIAL_SCALE: 0.8,
+};
+
+// Combo notification styling - 3-Layer Text System
+export const COMBO_NOTIFICATION = {
+  // Text sizing
+  COMBO_FONT_SIZE: 42,
+  NUMBER_FONT_SIZE: 56,
+  STROKE_WIDTH: 5,
+
+  // 3-Layer colors for "Combo" text
+  COMBO_STROKE_COLOR: '#2D4A7C',      // Layer 1: Dark blue outer stroke
+  COMBO_FILL_COLOR: '#7BC4E8',        // Layer 2: Light cyan fill
+  COMBO_HIGHLIGHT_COLOR: '#FFFFFF',   // Layer 3: White inner highlight
+
+  // 3-Layer colors for Number
+  NUMBER_STROKE_COLOR: '#2D4A7C',     // Layer 1: Dark blue outer stroke
+  NUMBER_FILL_TOP: '#FFE55C',         // Layer 2: Gold gradient top
+  NUMBER_FILL_BOTTOM: '#F5C518',      // Layer 2: Gold gradient bottom
+  NUMBER_HIGHLIGHT_COLOR: '#FFFDE7',  // Layer 3: Light yellow highlight
+
+  // Starburst VFX - WHITE rays
+  STARBURST_RAYS: 12,
+  STARBURST_INNER_RADIUS: 8,
+  STARBURST_OUTER_RADIUS: 60,
+  STARBURST_COLOR: 'rgba(255, 255, 255, 0.9)',
+
+  // Soft glow layer (behind rays)
+  STARBURST_RAY_OPACITY: 0.475,       // 50% of original 0.95
+  STARBURST_GLOW_LAYER_OPACITY: 0.3,  // Soft background glow
+  STARBURST_GLOW_LAYER_RADIUS: 80,    // Larger than ray outer radius
+  STARBURST_ROTATION_DEGREES: 10,     // Total rotation over animation
+
+  // Animation timing
+  ZOOM_IN_DURATION: 150,
+  HOLD_DURATION: 400,                 // Extended from 200ms (800ms total)
+  FADE_DURATION: 250,
+  PULSE_SPEED: 4,                     // 100% slower (was 8)
+  PULSE_MIN_SCALE: 0.9,               // Reduced amplitude (was 0.8)
+  PULSE_MAX_SCALE: 1.1,               // Reduced amplitude (was 1.2)
+  INITIAL_SCALE: 0.3,
+};
+
+// Home screen styling
+export const HOME_SCREEN = {
+  // Title styling (3-layer like combo)
+  TITLE_FONT_SIZE: 52,
+  TITLE_STROKE_COLOR: '#2D4A7C',
+  TITLE_FILL_TOP: '#FFE55C',
+  TITLE_FILL_BOTTOM: '#F5C518',
+  TITLE_HIGHLIGHT_COLOR: '#FFFDE7',
+  TITLE_STROKE_WIDTH: 4,
+
+  // High score badge
+  BADGE_BG: 'rgba(0, 0, 0, 0.25)',
+  BADGE_RADIUS: 16,
+  BADGE_PADDING_X: 20,
+  BADGE_PADDING_Y: 10,
+
+  // Start button
+  BUTTON_WIDTH: 200,
+  BUTTON_HEIGHT: 56,
+  BUTTON_RADIUS: 28,
+  BUTTON_GRADIENT_TOP: '#5CBF60',
+  BUTTON_GRADIENT_BOTTOM: '#3DA441',
+  BUTTON_STROKE_COLOR: '#2D8A31',
+  BUTTON_STROKE_WIDTH: 3,
+  BUTTON_TEXT_COLOR: '#FFFFFF',
+  BUTTON_FONT_SIZE: 24,
 };
