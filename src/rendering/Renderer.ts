@@ -21,6 +21,7 @@ export interface RenderState {
   dropBlocks: (Block | null)[];
   dragState: DragState | null;
   highlightedCells: HighlightedCell[];
+  animatingCellKeys: Set<string>;  // Keys of cells being animated ("x,y") - skip in normal render
   score: number;
   highScore: number;
   comboStreak: number;
@@ -100,7 +101,7 @@ export class Renderer {
     this.renderGridContainer();
     this.renderGrid(state.grid);
     this.renderHighlights(state.highlightedCells);
-    this.renderGridBlocks(state.grid);
+    this.renderGridBlocks(state.grid, state.highlightedCells, state.animatingCellKeys);
     this.renderDropArea(state.dropBlocks, state.dragState);
     this.renderDragPreview(state.dragState);
   }
@@ -424,8 +425,29 @@ export class Renderer {
   }
 
   // Render blocks placed on the grid
-  private renderGridBlocks(grid: Grid): void {
+  private renderGridBlocks(
+    grid: Grid,
+    highlightedCells: HighlightedCell[] = [],
+    animatingCellKeys: Set<string> = new Set()
+  ): void {
+    // Create set of highlighted positions to skip (they're rendered with new color in renderHighlights)
+    const highlightedPositions = new Set(
+      highlightedCells.map(c => `${c.x},${c.y}`)
+    );
+
     grid.forEachCell((x, y, cell) => {
+      const key = `${x},${y}`;
+
+      // Skip cells that are highlighted - they're already rendered with the dragged block's color
+      if (highlightedPositions.has(key)) {
+        return;
+      }
+
+      // Skip cells that are animating - they're rendered separately in renderAnimatingCells
+      if (animatingCellKeys.has(key)) {
+        return;
+      }
+
       if (cell.occupied && cell.color) {
         const screenX = this.gridOriginX + x * CELL_SIZE;
         const screenY = this.gridOriginY + y * CELL_SIZE;

@@ -248,12 +248,17 @@ export class Grid {
     return cells;
   }
 
+  // Clear a single cell at given position
+  public clearCell(x: number, y: number): void {
+    if (this.isValidPosition(x, y)) {
+      this.cells[y][x] = { occupied: false, color: null };
+    }
+  }
+
   // Clear cells at given positions
   public clearCells(cells: Point[]): void {
     for (const { x, y } of cells) {
-      if (this.isValidPosition(x, y)) {
-        this.cells[y][x] = { occupied: false, color: null };
-      }
+      this.clearCell(x, y);
     }
   }
 

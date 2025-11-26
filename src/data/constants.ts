@@ -168,3 +168,26 @@ export const INPUT = {
   tapThreshold: 10, // pixels - movement less than this is a tap
   dragThreshold: 5, // pixels - movement more than this starts drag
 };
+
+// Intro animation (game start)
+export const INTRO_ANIMATION = {
+  ROW_DELAY: 100,           // 0.1s between rows
+  CELL_DURATION: 200,       // 0.2s per cell animation
+  WAIT_AFTER_FILL: 500,     // 0.5s wait after grid is filled
+  WAIT_AFTER_CLEAR: 300,    // 0.3s wait after grid is cleared
+};
+
+// Game over animation
+export const GAME_OVER_ANIMATION = {
+  ROW_DELAY: 50,            // 0.05s between rows (faster than intro)
+  CELL_DURATION: 100,       // 0.1s per cell
+  FINAL_ALPHA: 0.25,        // 25% opacity for shadow blocks
+  WAIT_BEFORE_MODAL: 150,   // 0.15s before showing modal
+};
+
+// Modal animation
+export const MODAL_ANIMATION = {
+  SHOW_DURATION: 300,       // 0.3s
+  HIDE_DURATION: 200,       // 0.2s
+  INITIAL_SCALE: 0.8,
+};

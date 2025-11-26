@@ -85,6 +85,10 @@ export class DragDropManager {
     return this.highlightedCells;
   }
 
+  public clearHighlights(): void {
+    this.highlightedCells = [];
+  }
+
   public clearSlot(slotIndex: number): void {
     if (slotIndex >= 0 && slotIndex < 3) {
       this.dropBlocks[slotIndex] = null;
@@ -230,16 +234,17 @@ export class DragDropManager {
 
     if (gridPosition && isValidPlacement) {
       // Valid drop - notify callback
+      // Keep highlights for line clear animation (Game.ts will call clearHighlights after animation)
       this.callbacks.onDrop?.(block, gridPosition, slotIndex);
     } else {
-      // Invalid drop - return to slot
+      // Invalid drop - return to slot, clear highlights immediately
+      this.highlightedCells = [];
       this.callbacks.onDragCancel?.(block, slotIndex);
     }
 
-    // Clear drag state
+    // Clear drag state (but keep highlights for valid drop)
     this.currentDrag = null;
     this.dragSlotIndex = -1;
-    this.highlightedCells = [];
     this.lastCalculatedGridPos = null;
   }
 

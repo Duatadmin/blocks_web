@@ -1,7 +1,8 @@
 // Main Game Controller
 // Orchestrates all game systems
 
-import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION } from './data/constants';
+import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION } from './data/constants';
+import { easeOutBack, easeInQuad } from './utils/easing';
 import { Grid } from './core/Grid';
 import { Block } from './core/Block';
 import { BlockGenerator } from './core/BlockGenerator';
@@ -50,8 +51,11 @@ export class Game {
   private comboNotification: ComboNotification | null = null;
   private isNewHighScore: boolean = false;
 
-  // Cell animations for line clearing
-  private animatingCells: Map<string, { scale: number; opacity: number; rotation: number }> = new Map();
+  // Cell animations for line clearing - stores color at animation start to avoid stale reads
+  private animatingCells: Map<string, { scale: number; opacity: number; rotation: number; color: BlockColor }> = new Map();
+
+  // Cell animations for intro and game over animations
+  private introAnimCells: Map<string, { scale: number; alpha: number; color: BlockColor }> = new Map();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -154,7 +158,7 @@ export class Game {
     }
   }
 
-  private startGame(): void {
+  private async startGame(): Promise<void> {
     // Reset all systems
     this.grid.reset();
     this.blockGenerator.reset();
@@ -162,6 +166,11 @@ export class Game {
     this.isNewHighScore = false;
     this.comboNotification = null;
     this.animatingCells.clear();
+    this.introAnimCells.clear();
+
+    // Play intro animation BEFORE generating blocks
+    this.state = 'animating';
+    await this.playIntroAnimation();
 
     // Generate initial blocks
     this.generateNewBlocks();
@@ -173,6 +182,79 @@ export class Game {
     const newBlocks = this.blockGenerator.generateThree(this.grid);
     this.dropBlocks = newBlocks;
     this.dragDropManager.setBlocks(this.dropBlocks);
+  }
+
+  // ========== INTRO ANIMATION ==========
+
+  private async playIntroAnimation(): Promise<void> {
+    // Phase 1: Fill rows bottom-to-top
+    for (let row = GRID_SIZE - 1; row >= 0; row--) {
+      this.fillIntroRow(row);
+      await this.animationManager.wait(INTRO_ANIMATION.ROW_DELAY);
+    }
+
+    // Wait after fill
+    await this.animationManager.wait(INTRO_ANIMATION.WAIT_AFTER_FILL);
+
+    // Phase 2: Clear rows top-to-bottom
+    for (let row = 0; row < GRID_SIZE; row++) {
+      this.clearIntroRow(row);
+      await this.animationManager.wait(INTRO_ANIMATION.ROW_DELAY);
+    }
+
+    // Wait after clear
+    await this.animationManager.wait(INTRO_ANIMATION.WAIT_AFTER_CLEAR);
+
+    // Cleanup
+    this.introAnimCells.clear();
+  }
+
+  private fillIntroRow(row: number): void {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const key = `${col},${row}`;
+      const color = BLOCK_COLORS[Math.floor(Math.random() * BLOCK_COLORS.length)];
+
+      // Add to intro cells with initial state
+      this.introAnimCells.set(key, { scale: 0, alpha: 0, color });
+
+      // Animate scale and alpha to 1
+      this.animationManager.tween({
+        from: 0,
+        to: 1,
+        duration: INTRO_ANIMATION.CELL_DURATION,
+        easing: easeOutBack,  // Bouncy overshoot
+        onUpdate: (value) => {
+          const cell = this.introAnimCells.get(key);
+          if (cell) {
+            cell.scale = value;
+            cell.alpha = value;
+          }
+        },
+      });
+    }
+  }
+
+  private clearIntroRow(row: number): void {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const key = `${col},${row}`;
+
+      this.animationManager.tween({
+        from: 1,
+        to: 0,
+        duration: INTRO_ANIMATION.CELL_DURATION,
+        easing: easeInQuad,  // Accelerate out
+        onUpdate: (value) => {
+          const cell = this.introAnimCells.get(key);
+          if (cell) {
+            cell.scale = value;
+            cell.alpha = value;
+          }
+        },
+        onComplete: () => {
+          this.introAnimCells.delete(key);
+        },
+      });
+    }
   }
 
   // Drag & Drop Callbacks
@@ -204,7 +286,8 @@ export class Game {
     if (result.linesCompleted.length > 0) {
       this.handleLineClear(result.linesCompleted, result.cellsPlaced);
     } else {
-      // No lines cleared, just process placement points
+      // No lines cleared - clear highlights immediately and process placement
+      this.dragDropManager.clearHighlights();
       this.scoreManager.processPlacement(result.pointsFromPlacement, 0, false);
       this.checkGameState();
     }
@@ -218,15 +301,17 @@ export class Game {
     this.previousState = this.state;
     this.state = 'animating';
 
+    // CRITICAL: Clear highlights IMMEDIATELY at start of line clear
+    // Highlights were for preview - now we transition to destruction animation
+    // If we don't clear them, they render full-size blocks underneath the shrinking animation!
+    this.dragDropManager.clearHighlights();
+
     // Get cells to clear
     const cellsToClear = this.grid.getCellsToClear(lineIndices);
 
-    // Calculate center of placed block for direction
-    const centerX = placedCells.reduce((sum, p) => sum + p.x, 0) / placedCells.length;
-    const centerY = placedCells.reduce((sum, p) => sum + p.y, 0) / placedCells.length;
-
-    // Determine cascade direction based on placement position
-    const placementOnLeft = centerX < GRID_SIZE / 2;
+    // Simplified direction logic (matching Godot): use leftmost placed cell position
+    const minPlacedX = Math.min(...placedCells.map(p => p.x));
+    const placementOnLeft = minPlacedX < GRID_SIZE / 2;
 
     // Sort cells for directional cascade (Godot-style)
     // If placed on left: cascade left→right (ascending x, then y)
@@ -243,6 +328,16 @@ export class Game {
       }
     });
 
+    // CRITICAL: Add ALL cells to animatingCells IMMEDIATELY with initial visible state
+    // This ensures they're skipped in renderGridBlocks from the very start,
+    // preventing "animation on top of static blocks" issue
+    for (const cell of cellsToClear) {
+      const key = `${cell.x},${cell.y}`;
+      const gridCell = this.grid.getCell(cell.x, cell.y);
+      const cellColor: BlockColor = gridCell?.color || 'Red';
+      this.animatingCells.set(key, { scale: 1, opacity: 1, rotation: 0, color: cellColor });
+    }
+
     // Start screen shake
     const shakeIntensity = SCREEN_SHAKE.baseStrength + lineIndices.length * SCREEN_SHAKE.strengthPerLine;
     this.screenShake.shake(shakeIntensity, SCREEN_SHAKE.duration);
@@ -256,35 +351,40 @@ export class Game {
       const cell = cellsToClear[i];
       const key = `${cell.x},${cell.y}`;
 
-      // Get cell color before it's cleared
-      const gridCell = this.grid.getCell(cell.x, cell.y);
-      const cellColor = gridCell?.color || 'Red';
+      // Get color from animatingCells (already stored above)
+      const cellColor = this.animatingCells.get(key)!.color;
 
       // Calculate screen position for particle emission
       const screenX = gridOrigin.x + cell.x * CELL_SIZE + CELL_SIZE / 2;
       const screenY = gridOrigin.y + cell.y * CELL_SIZE + CELL_SIZE / 2;
 
-      // Particle direction based on cascade
+      // Particle direction based on cascade (opposite direction for "spray out" effect)
       const particleDir = {
         x: placementOnLeft ? 1 : -1,
         y: -0.5  // Slightly upward
       };
 
-      // Schedule particle emission when this cell starts animating
-      setTimeout(() => {
-        this.particleSystem.emit(screenX, screenY, {
-          color: cellColor,
-          direction: particleDir,
-        });
-      }, i * staggerDelay);
+      // Track if particles have been emitted for this cell
+      let particlesEmitted = false;
 
       animPromises.push(new Promise((resolve) => {
         this.animationManager.animateCellClear(
           (scale, opacity, rotation) => {
-            this.animatingCells.set(key, { scale, opacity, rotation });
+            // Emit particles on FIRST callback (when animation actually starts after stagger)
+            if (!particlesEmitted) {
+              particlesEmitted = true;
+              this.particleSystem.emit(screenX, screenY, {
+                color: cellColor,
+                direction: particleDir,
+              });
+            }
+            // Update animation state (cell is ALREADY in animatingCells from initial loop)
+            this.animatingCells.set(key, { scale, opacity, rotation, color: cellColor });
           },
           i * staggerDelay,
           () => {
+            // Clear THIS cell when ITS animation completes
+            this.grid.clearCell(cell.x, cell.y);
             this.animatingCells.delete(key);
             resolve();
           }
@@ -295,8 +395,7 @@ export class Game {
     // Wait for all animations to complete
     await Promise.all(animPromises);
 
-    // Actually clear the cells from grid
-    this.grid.clearLines(lineIndices);
+    // Note: cells are now cleared individually in callbacks above, no bulk clearLines() needed
 
     // Check for field clear
     const isFieldClear = this.grid.isEmpty();
@@ -368,8 +467,60 @@ export class Game {
     }
   }
 
-  private gameOver(): void {
+  private async gameOver(): Promise<void> {
+    this.state = 'animating';
+
+    // Play game over fill animation
+    await this.playGameOverAnimation();
+
     this.state = 'gameover';
+  }
+
+  // ========== GAME OVER ANIMATION ==========
+
+  private async playGameOverAnimation(): Promise<void> {
+    // Fill empty cells from bottom to top
+    for (let row = GRID_SIZE - 1; row >= 0; row--) {
+      let filledAny = false;
+
+      for (let col = 0; col < GRID_SIZE; col++) {
+        // Only fill empty cells (no block placed there)
+        if (!this.grid.getCell(col, row)) {
+          filledAny = true;
+          this.fillGameOverCell(col, row);
+        }
+      }
+
+      if (filledAny) {
+        await this.animationManager.wait(GAME_OVER_ANIMATION.ROW_DELAY);
+      }
+    }
+
+    // Wait before showing game over screen
+    await this.animationManager.wait(GAME_OVER_ANIMATION.WAIT_BEFORE_MODAL);
+  }
+
+  private fillGameOverCell(col: number, row: number): void {
+    const key = `go_${col},${row}`;  // Prefix to avoid collision with intro
+    const color = BLOCK_COLORS[Math.floor(Math.random() * BLOCK_COLORS.length)];
+
+    // Add to intro cells (reusing same map) with initial state
+    this.introAnimCells.set(key, { scale: 0, alpha: 0, color });
+
+    // Animate to 25% opacity only
+    this.animationManager.tween({
+      from: 0,
+      to: 1,
+      duration: GAME_OVER_ANIMATION.CELL_DURATION,
+      easing: easeOutBack,
+      onUpdate: (value) => {
+        const cell = this.introAnimCells.get(key);
+        if (cell) {
+          cell.scale = value;
+          cell.alpha = value * GAME_OVER_ANIMATION.FINAL_ALPHA;  // Max 0.25
+        }
+      },
+    });
   }
 
   private gameLoop(time: number): void {
@@ -423,17 +574,24 @@ export class Game {
   }
 
   private renderGameplay(): void {
+    // Create set of animating cell keys to skip in normal grid render
+    const animatingCellKeys = new Set(this.animatingCells.keys());
+
     const state: RenderState = {
       grid: this.grid,
       dropBlocks: this.dropBlocks,
       dragState: this.dragDropManager.getDragState(),
       highlightedCells: this.dragDropManager.getHighlightedCells(),
+      animatingCellKeys,
       score: this.scoreManager.getScore(),
       highScore: this.scoreManager.getHighScore(),
       comboStreak: this.scoreManager.getComboStreak(),
     };
 
     this.renderer.render(state);
+
+    // Render intro/game over animation cells
+    this.renderIntroAnimCells();
 
     // Render animating cells (being cleared)
     this.renderAnimatingCells();
@@ -458,26 +616,51 @@ export class Game {
 
     this.animatingCells.forEach((anim, key) => {
       const [x, y] = key.split(',').map(Number);
-      const cell = this.grid.getCell(x, y);
-      if (cell && cell.occupied && cell.color) {
-        const screenX = gridOrigin.x + x * CELL_SIZE;
-        const screenY = gridOrigin.y + y * CELL_SIZE;
+      const screenX = gridOrigin.x + x * CELL_SIZE;
+      const screenY = gridOrigin.y + y * CELL_SIZE;
 
-        this.ctx.save();
-        this.ctx.globalAlpha = anim.opacity;
+      this.ctx.save();
+      this.ctx.globalAlpha = anim.opacity;
 
-        // Transform from center: scale + rotation
-        const centerX = screenX + CELL_SIZE / 2;
-        const centerY = screenY + CELL_SIZE / 2;
-        this.ctx.translate(centerX, centerY);
-        this.ctx.rotate(anim.rotation);
-        this.ctx.scale(anim.scale, anim.scale);
-        this.ctx.translate(-centerX, -centerY);
+      // Transform from center: scale + rotation
+      const centerX = screenX + CELL_SIZE / 2;
+      const centerY = screenY + CELL_SIZE / 2;
+      this.ctx.translate(centerX, centerY);
+      this.ctx.rotate(anim.rotation);
+      this.ctx.scale(anim.scale, anim.scale);
+      this.ctx.translate(-centerX, -centerY);
 
-        this.renderer.renderBlock(screenX, screenY, CELL_SIZE, cell.color, anim.opacity);
+      // Use stored color (not re-read from grid - cell may already be cleared)
+      this.renderer.renderBlock(screenX, screenY, CELL_SIZE, anim.color, anim.opacity);
 
-        this.ctx.restore();
-      }
+      this.ctx.restore();
+    });
+  }
+
+  private renderIntroAnimCells(): void {
+    const gridOrigin = this.renderer.getGridOrigin();
+
+    this.introAnimCells.forEach((anim, key) => {
+      // Parse key (handle both "x,y" and "go_x,y" formats for game over)
+      const cleanKey = key.replace('go_', '');
+      const [x, y] = cleanKey.split(',').map(Number);
+
+      const screenX = gridOrigin.x + x * CELL_SIZE;
+      const screenY = gridOrigin.y + y * CELL_SIZE;
+
+      this.ctx.save();
+      this.ctx.globalAlpha = anim.alpha;
+
+      // Transform from center for scale
+      const centerX = screenX + CELL_SIZE / 2;
+      const centerY = screenY + CELL_SIZE / 2;
+      this.ctx.translate(centerX, centerY);
+      this.ctx.scale(anim.scale, anim.scale);
+      this.ctx.translate(-centerX, -centerY);
+
+      this.renderer.renderBlock(screenX, screenY, CELL_SIZE, anim.color, anim.alpha);
+
+      this.ctx.restore();
     });
   }
 }
