@@ -5,10 +5,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "npx serve dist -s -l $PORT"
   },
   "devDependencies": {
     "typescript": "^5.3.0",
     "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "serve": "^14.2.5"
   }
 }
