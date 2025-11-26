@@ -270,32 +270,12 @@ export class Renderer {
     }
   }
 
-  // Render an empty cell (subtle, nearly invisible)
+  // Render an empty cell (very subtle grid lines only)
   private renderEmptyCell(x: number, y: number, size: number): void {
-    const padding = 2;
-    const innerSize = size - padding * 2;
-    const radius = 6;
-    const ctx = this.ctx;
-
-    // Cell background - very subtle
-    ctx.fillStyle = COLORS.GridCell;
-    this.roundRect(x + padding, y + padding, innerSize, innerSize, radius);
-    ctx.fill();
-
-    // Very subtle inner shadow (much more minimal)
-    const gradient = ctx.createLinearGradient(x, y, x, y + size);
-    gradient.addColorStop(0, 'rgba(0, 0, 0, 0.06)');
-    gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
-    gradient.addColorStop(1, 'rgba(255, 255, 255, 0.02)');
-    ctx.fillStyle = gradient;
-    this.roundRect(x + padding, y + padding, innerSize, innerSize, radius);
-    ctx.fill();
-
-    // Subtle cell border for grid structure
-    ctx.strokeStyle = COLORS.GridCellBorder;
-    ctx.lineWidth = 0.5;
-    this.roundRect(x + padding, y + padding, innerSize, innerSize, radius);
-    ctx.stroke();
+    // Very subtle grid lines only - no filled rectangles
+    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    this.ctx.lineWidth = 1;
+    this.ctx.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1);
   }
 
   // Render highlighted cells (lines that would complete)
@@ -454,57 +434,70 @@ export class Renderer {
     });
   }
 
-  // Render a single block with modern styling - enhanced bevel, no grid lines per spec
+  // Render a single block with dark border for solid connected look
   public renderBlock(x: number, y: number, size: number, color: BlockColor, opacity: number = 1.0): void {
     const colorHex = COLORS[color];
-    const margin = size * 0.06; // 6% inset per spec
-    const innerX = x + margin;
-    const innerY = y + margin;
-    const innerSize = size - margin * 2;
-    const radius = size * 0.12;
+    const borderWidth = 1;               // Dark border width
+    const radius = 2;                    // Nearly square corners
+    const bevelWidth = size * 0.08;      // Bevel edge width
     const ctx = this.ctx;
 
     ctx.save();
     ctx.globalAlpha = opacity;
 
-    // Drop shadow per spec: (0, 4px) offset, 4-6px blur
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = 5;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 4;
-
-    // Main block gradient with enhanced contrast per spec (+25%, -28%)
-    const gradient = ctx.createLinearGradient(innerX, innerY, innerX, innerY + innerSize);
-    gradient.addColorStop(0, lighten(colorHex, 25));    // +25% brightness
-    gradient.addColorStop(0.5, colorHex);
-    gradient.addColorStop(1, darken(colorHex, 28));     // -28% brightness
-
-    ctx.fillStyle = gradient;
-    this.roundRect(innerX, innerY, innerSize, innerSize, radius);
+    // 1. DARK BORDER (fills entire cell, creates connected look)
+    ctx.fillStyle = darken(colorHex, 45);
+    this.roundRect(x, y, size, size, radius);
     ctx.fill();
 
-    // Reset shadow
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
+    // Inner block area (inside the border)
+    const innerX = x + borderWidth;
+    const innerY = y + borderWidth;
+    const innerSize = size - borderWidth * 2;
 
-    // NO INNER GRID LINES - clean solid blocks
-
-    // Subtle top highlight (matte finish)
-    const highlightGradient = ctx.createLinearGradient(innerX, innerY, innerX, innerY + innerSize * 0.3);
-    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
-    highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
-    ctx.fillStyle = highlightGradient;
-    this.roundRect(innerX, innerY, innerSize, innerSize * 0.35, radius);
+    // 2. BASE LAYER for bevel (bottom-right shadow)
+    ctx.fillStyle = darken(colorHex, 25);
+    this.roundRect(innerX, innerY, innerSize, innerSize, Math.max(0, radius - 1));
     ctx.fill();
 
-    // Inner border highlight
-    ctx.strokeStyle = toRgba(lighten(colorHex, 30), 0.3);
-    ctx.lineWidth = 1;
-    this.roundRect(innerX + 1, innerY + 1, innerSize - 2, innerSize - 2, radius - 1);
-    ctx.stroke();
+    // 3. TOP-LEFT HIGHLIGHT (bright bevel edge)
+    ctx.fillStyle = lighten(colorHex, 30);
+    ctx.beginPath();
+    ctx.moveTo(innerX, innerY);
+    ctx.lineTo(innerX + innerSize, innerY);
+    ctx.lineTo(innerX + innerSize - bevelWidth, innerY + bevelWidth);
+    ctx.lineTo(innerX + bevelWidth, innerY + bevelWidth);
+    ctx.lineTo(innerX + bevelWidth, innerY + innerSize - bevelWidth);
+    ctx.lineTo(innerX, innerY + innerSize);
+    ctx.closePath();
+    ctx.fill();
+
+    // 4. FLAT CENTER (main block color)
+    ctx.fillStyle = colorHex;
+    this.roundRect(
+      innerX + bevelWidth,
+      innerY + bevelWidth,
+      innerSize - bevelWidth * 2,
+      innerSize - bevelWidth * 2,
+      0
+    );
+    ctx.fill();
+
+    // 5. Subtle top shine
+    const shineHeight = (innerSize - bevelWidth * 2) * 0.25;
+    const shineGradient = ctx.createLinearGradient(
+      innerX + bevelWidth, innerY + bevelWidth,
+      innerX + bevelWidth, innerY + bevelWidth + shineHeight
+    );
+    shineGradient.addColorStop(0, 'rgba(255, 255, 255, 0.12)');
+    shineGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = shineGradient;
+    ctx.fillRect(
+      innerX + bevelWidth,
+      innerY + bevelWidth,
+      innerSize - bevelWidth * 2,
+      shineHeight
+    );
 
     ctx.restore();
   }

@@ -90,9 +90,9 @@ export const COLORS = {
   Background: '#4A6FA5',      // Vibrant blue (fallback)
   BackgroundTop: '#4A6FA5',   // Gradient top color
   BackgroundBottom: '#314F7A', // Gradient bottom color
-  GridBackground: '#2D3A5C',  // Dark blue container
-  GridCell: '#374A70',        // Slightly lighter empty cells
-  GridCellBorder: '#4A5A80',  // Subtle cell borders
+  GridBackground: '#1a2744',  // Darker navy container
+  GridCell: '#1e2d4a',        // Very subtle cell color
+  GridCellBorder: 'rgba(255, 255, 255, 0.08)',  // Nearly invisible
 
   // Effect colors
   Gold: '#ffd700',
