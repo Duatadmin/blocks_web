@@ -82,9 +82,14 @@ export class Renderer {
     return this.dropAreaY;
   }
 
-  // Clear the canvas
+  // Clear the canvas with gradient background
   public clear(): void {
-    this.ctx.fillStyle = COLORS.Background;
+    // Vertical gradient per design spec
+    const gradient = this.ctx.createLinearGradient(0, 0, 0, VIEWPORT_HEIGHT);
+    gradient.addColorStop(0, COLORS.BackgroundTop);
+    gradient.addColorStop(1, COLORS.BackgroundBottom);
+
+    this.ctx.fillStyle = gradient;
     this.ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
   }
 
@@ -449,86 +454,57 @@ export class Renderer {
     });
   }
 
-  // Render a single block with modern styling (matte finish with inner grid lines)
+  // Render a single block with modern styling - enhanced bevel, no grid lines per spec
   public renderBlock(x: number, y: number, size: number, color: BlockColor, opacity: number = 1.0): void {
     const colorHex = COLORS[color];
-    const padding = 2;
-    const innerSize = size - padding * 2;
-    const radius = 6;
+    const margin = size * 0.06; // 6% inset per spec
+    const innerX = x + margin;
+    const innerY = y + margin;
+    const innerSize = size - margin * 2;
+    const radius = size * 0.12;
     const ctx = this.ctx;
 
     ctx.save();
     ctx.globalAlpha = opacity;
 
-    // Enhanced drop shadow (stronger 3D effect)
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetX = 3;
+    // Drop shadow per spec: (0, 4px) offset, 4-6px blur
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = 5;
+    ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 4;
 
-    // Main block gradient (slightly flatter for matte look)
-    const gradient = ctx.createLinearGradient(x, y, x, y + size);
-    gradient.addColorStop(0, lighten(colorHex, 10));
+    // Main block gradient with enhanced contrast per spec (+25%, -28%)
+    const gradient = ctx.createLinearGradient(innerX, innerY, innerX, innerY + innerSize);
+    gradient.addColorStop(0, lighten(colorHex, 25));    // +25% brightness
     gradient.addColorStop(0.5, colorHex);
-    gradient.addColorStop(1, darken(colorHex, 12));
+    gradient.addColorStop(1, darken(colorHex, 28));     // -28% brightness
 
     ctx.fillStyle = gradient;
-    this.roundRect(x + padding, y + padding, innerSize, innerSize, radius);
+    this.roundRect(innerX, innerY, innerSize, innerSize, radius);
     ctx.fill();
 
-    // Reset shadow for rest of drawing
+    // Reset shadow
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
 
-    // Inner grid lines (texture effect) - moderate visibility 22% opacity
-    const gridLineColor = toRgba(darken(colorHex, 30), 0.22);
-    ctx.strokeStyle = gridLineColor;
-    ctx.lineWidth = 1;
+    // NO INNER GRID LINES - clean solid blocks
 
-    const innerX = x + padding;
-    const innerY = y + padding;
-
-    // Horizontal lines at 33% and 66%
-    ctx.beginPath();
-    ctx.moveTo(innerX + 4, innerY + innerSize * 0.33);
-    ctx.lineTo(innerX + innerSize - 4, innerY + innerSize * 0.33);
-    ctx.moveTo(innerX + 4, innerY + innerSize * 0.66);
-    ctx.lineTo(innerX + innerSize - 4, innerY + innerSize * 0.66);
-    ctx.stroke();
-
-    // Vertical lines at 33% and 66%
-    ctx.beginPath();
-    ctx.moveTo(innerX + innerSize * 0.33, innerY + 4);
-    ctx.lineTo(innerX + innerSize * 0.33, innerY + innerSize - 4);
-    ctx.moveTo(innerX + innerSize * 0.66, innerY + 4);
-    ctx.lineTo(innerX + innerSize * 0.66, innerY + innerSize - 4);
-    ctx.stroke();
-
-    // Subtle top highlight (matte - reduced from 0.35 to 0.15)
-    const highlightGradient = ctx.createLinearGradient(x, y + padding, x, y + size * 0.25);
-    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+    // Subtle top highlight (matte finish)
+    const highlightGradient = ctx.createLinearGradient(innerX, innerY, innerX, innerY + innerSize * 0.3);
+    highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
     highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
     ctx.fillStyle = highlightGradient;
-    this.roundRect(x + padding, y + padding, innerSize, innerSize * 0.35, radius);
+    this.roundRect(innerX, innerY, innerSize, innerSize * 0.35, radius);
     ctx.fill();
 
-    // Inner border highlight (subtle)
-    ctx.strokeStyle = toRgba(lighten(colorHex, 25), 0.35);
+    // Inner border highlight
+    ctx.strokeStyle = toRgba(lighten(colorHex, 30), 0.3);
     ctx.lineWidth = 1;
-    this.roundRect(x + padding + 1, y + padding + 1, innerSize - 2, innerSize - 2, radius - 1);
+    this.roundRect(innerX + 1, innerY + 1, innerSize - 2, innerSize - 2, radius - 1);
     ctx.stroke();
-
-    // Bottom edge darkening
-    const bottomGradient = ctx.createLinearGradient(x, y + size * 0.75, x, y + size - padding);
-    bottomGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    bottomGradient.addColorStop(1, 'rgba(0, 0, 0, 0.15)');
-
-    ctx.fillStyle = bottomGradient;
-    this.roundRect(x + padding, y + padding, innerSize, innerSize, radius);
-    ctx.fill();
 
     ctx.restore();
   }

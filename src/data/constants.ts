@@ -87,7 +87,9 @@ export const COLORS = {
   Violet: '#8e24aa',
 
   // UI colors
-  Background: '#4A6FA5',      // Vibrant blue
+  Background: '#4A6FA5',      // Vibrant blue (fallback)
+  BackgroundTop: '#4A6FA5',   // Gradient top color
+  BackgroundBottom: '#314F7A', // Gradient bottom color
   GridBackground: '#2D3A5C',  // Dark blue container
   GridCell: '#374A70',        // Slightly lighter empty cells
   GridCellBorder: '#4A5A80',  // Subtle cell borders
