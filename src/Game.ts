@@ -64,6 +64,8 @@ export class Game {
 
   // Game scale for responsive sizing
   private scale: number = 1;
+  // Device pixel ratio for high-DPI (retina) display support
+  private dpr: number = 1;
 
   // Core systems
   private grid!: Grid;
@@ -106,7 +108,7 @@ export class Game {
     this.grid = new Grid();
     this.blockGenerator = new BlockGenerator();
     this.scoreManager = new ScoreManager();
-    this.renderer = new Renderer(this.ctx);
+    this.renderer = new Renderer(this.ctx, this.dpr);
     this.inputManager = new InputManager(this.canvas);
     this.animationManager = new AnimationManager();
     this.screenShake = new ScreenShake();
@@ -161,6 +163,9 @@ export class Game {
     const containerWidth = window.innerWidth;
     const containerHeight = window.innerHeight;
 
+    // Get device pixel ratio for high-DPI (retina) display support
+    this.dpr = window.devicePixelRatio || 1;
+
     const targetAspect = VIEWPORT_WIDTH / VIEWPORT_HEIGHT;
     const containerAspect = containerWidth / containerHeight;
 
@@ -170,16 +175,25 @@ export class Game {
       this.scale = containerWidth / VIEWPORT_WIDTH;
     }
 
-    const canvasWidth = VIEWPORT_WIDTH * this.scale;
-    const canvasHeight = VIEWPORT_HEIGHT * this.scale;
+    const cssWidth = VIEWPORT_WIDTH * this.scale;
+    const cssHeight = VIEWPORT_HEIGHT * this.scale;
 
-    this.canvas.width = canvasWidth;
-    this.canvas.height = canvasHeight;
-    this.canvas.style.width = `${canvasWidth}px`;
-    this.canvas.style.height = `${canvasHeight}px`;
+    // Set canvas resolution to physical pixels (crisp on high-DPI displays)
+    this.canvas.width = cssWidth * this.dpr;
+    this.canvas.height = cssHeight * this.dpr;
+
+    // Set CSS size to logical pixels
+    this.canvas.style.width = `${cssWidth}px`;
+    this.canvas.style.height = `${cssHeight}px`;
+
+    // Scale context to account for DPR - all drawing uses logical coordinates
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
     // Update input manager scale
     this.inputManager?.setScale(this.scale);
+
+    // Invalidate renderer caches when canvas size changes (they depend on DPR)
+    this.renderer?.invalidateCaches();
   }
 
   private handleGlobalInput(event: InputEvent): void {
@@ -990,15 +1004,16 @@ export class Game {
   }
 
   private renderGameplay(): void {
-    // Create set of animating cell keys to skip in normal grid render
-    const animatingCellKeys = new Set(this.animatingCells.keys());
+    // Pass animatingCells Map directly - Map.has() works same as Set.has()
+    // This avoids creating a new Set from keys every frame
 
     const state: RenderState = {
       grid: this.grid,
       dropBlocks: this.dropBlocks,
       dragState: this.dragDropManager.getDragState(),
       highlightedCells: this.dragDropManager.getHighlightedCells(),
-      animatingCellKeys,
+      highlightedPositions: this.dragDropManager.getHighlightedPositionsSet(),
+      animatingCells: this.animatingCells,
       score: this.scoreManager.getScore(),
       highScore: this.scoreManager.getHighScore(),
       comboStreak: this.scoreManager.getComboStreak(),

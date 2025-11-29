@@ -26,6 +26,8 @@ export class DragDropManager {
   private currentDrag: DragState | null = null;
   private dragSlotIndex: number = -1;
   private highlightedCells: HighlightedCell[] = [];
+  // Cached Set of highlighted positions - built once when highlights change, not every frame
+  private highlightedPositionsSet: Set<string> = new Set();
 
   // Drag offset - calculated when drag starts
   // Block's bottom-center at touch point, then offset 2 cells above
@@ -85,8 +87,14 @@ export class DragDropManager {
     return this.highlightedCells;
   }
 
+  // Get cached Set of highlighted positions - avoids creating new Set every frame
+  public getHighlightedPositionsSet(): Set<string> {
+    return this.highlightedPositionsSet;
+  }
+
   public clearHighlights(): void {
     this.highlightedCells = [];
+    this.highlightedPositionsSet.clear();
   }
 
   public clearSlot(slotIndex: number): void {
@@ -239,6 +247,7 @@ export class DragDropManager {
     } else {
       // Invalid drop - return to slot, clear highlights immediately
       this.highlightedCells = [];
+      this.highlightedPositionsSet.clear();
       this.callbacks.onDragCancel?.(block, slotIndex);
     }
 
@@ -259,6 +268,7 @@ export class DragDropManager {
     this.currentDrag = null;
     this.dragSlotIndex = -1;
     this.highlightedCells = [];
+    this.highlightedPositionsSet.clear();
     this.lastCalculatedGridPos = null;
   }
 
@@ -301,6 +311,7 @@ export class DragDropManager {
 
   private updateHighlights(): void {
     this.highlightedCells = [];
+    this.highlightedPositionsSet.clear();
 
     if (!this.currentDrag || !this.currentDrag.gridPosition || !this.currentDrag.isValidPlacement) {
       return;
@@ -319,8 +330,11 @@ export class DragDropManager {
     for (const lineIndex of completableLines) {
       const cells = this.grid.getLineCells(lineIndex);
       for (const cell of cells) {
-        // Avoid duplicates
-        if (!this.highlightedCells.some(h => h.x === cell.x && h.y === cell.y)) {
+        const key = `${cell.x},${cell.y}`;
+        // Use Set for O(1) duplicate detection instead of O(n) .some()
+        if (!this.highlightedPositionsSet.has(key)) {
+          this.highlightedPositionsSet.add(key);
+
           // Check if this cell is empty or occupied
           const gridCell = this.grid.getCell(cell.x, cell.y);
           const isEmpty = !gridCell || !gridCell.occupied;

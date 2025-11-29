@@ -27,8 +27,15 @@ export class Grid {
   private cells: GridCell[][];
   private readonly size = GRID_SIZE;
 
+  // Performance optimization: track occupied count per row/column
+  // Allows O(1) line completion check instead of O(n) iteration
+  private rowCounts: Uint8Array;
+  private colCounts: Uint8Array;
+
   constructor() {
     this.cells = this.createEmptyGrid();
+    this.rowCounts = new Uint8Array(GRID_SIZE);
+    this.colCounts = new Uint8Array(GRID_SIZE);
   }
 
   private createEmptyGrid(): GridCell[][] {
@@ -38,6 +45,8 @@ export class Grid {
   // Reset the grid to empty state
   public reset(): void {
     this.cells = this.createEmptyGrid();
+    this.rowCounts.fill(0);
+    this.colCounts.fill(0);
   }
 
   // Get cell at position
@@ -105,6 +114,9 @@ export class Grid {
       const x = gridPos.x + normalizedX;
       const y = gridPos.y + normalizedY;
       this.cells[y][x] = { occupied: true, color };
+      // Update row/column counts for O(1) line completion check
+      this.rowCounts[y]++;
+      this.colCounts[x]++;
       cellsPlaced.push({ x, y });
     }
 
@@ -120,34 +132,21 @@ export class Grid {
   }
 
   // Find all completed lines (rows and columns)
+  // OPTIMIZED: Uses O(1) count lookup instead of O(n) iteration per line
   public findCompletedLines(): number[] {
     const completed: number[] = [];
 
-    // Check rows (indices 0-7)
+    // Check rows (indices 0-7) - O(1) per row using counts
     for (let y = 0; y < this.size; y++) {
-      let rowComplete = true;
-      for (let x = 0; x < this.size; x++) {
-        if (!this.cells[y][x].occupied) {
-          rowComplete = false;
-          break;
-        }
-      }
-      if (rowComplete) {
-        completed.push(y); // Row index
+      if (this.rowCounts[y] === this.size) {
+        completed.push(y);
       }
     }
 
-    // Check columns (indices 8-15)
+    // Check columns (indices 8-15) - O(1) per column using counts
     for (let x = 0; x < this.size; x++) {
-      let colComplete = true;
-      for (let y = 0; y < this.size; y++) {
-        if (!this.cells[y][x].occupied) {
-          colComplete = false;
-          break;
-        }
-      }
-      if (colComplete) {
-        completed.push(x + this.size); // Column index offset by grid size
+      if (this.colCounts[x] === this.size) {
+        completed.push(x + this.size);
       }
     }
 
@@ -156,6 +155,7 @@ export class Grid {
 
   // Get which lines would be completed if a shape was placed
   // Uses normalized coordinates (shape starts at 0,0)
+  // OPTIMIZED: Uses row/column counts instead of cloning the entire grid
   public getCompletableLines(shape: BlockShape, gridPos: Point): number[] {
     if (!this.canPlace(shape, gridPos)) {
       return [];
@@ -163,45 +163,40 @@ export class Grid {
 
     const bounds = getShapeBounds(shape);
 
-    // Create a temporary copy of the grid
-    const tempCells = clone2DArray(this.cells);
+    // Track how many new cells would be added to each row/column
+    // Using small typed arrays on stack instead of cloning 64-cell grid
+    const rowAdditions = new Uint8Array(this.size);
+    const colAdditions = new Uint8Array(this.size);
 
-    // Temporarily place the shape (with normalized coordinates)
+    // Count shape cells per row and column
     for (const [dx, dy] of shape.cells) {
       const normalizedX = dx - bounds.minX;
       const normalizedY = dy - bounds.minY;
       const x = gridPos.x + normalizedX;
       const y = gridPos.y + normalizedY;
-      tempCells[y][x] = { occupied: true, color: null };
+      rowAdditions[y]++;
+      colAdditions[x]++;
     }
 
     const completed: number[] = [];
 
-    // Check rows
+    // Check only rows that would receive new cells
     for (let y = 0; y < this.size; y++) {
-      let rowComplete = true;
-      for (let x = 0; x < this.size; x++) {
-        if (!tempCells[y][x].occupied) {
-          rowComplete = false;
-          break;
+      if (rowAdditions[y] > 0) {
+        // Row would be complete if current count + new cells = grid size
+        if (this.rowCounts[y] + rowAdditions[y] === this.size) {
+          completed.push(y);
         }
-      }
-      if (rowComplete) {
-        completed.push(y);
       }
     }
 
-    // Check columns
+    // Check only columns that would receive new cells
     for (let x = 0; x < this.size; x++) {
-      let colComplete = true;
-      for (let y = 0; y < this.size; y++) {
-        if (!tempCells[y][x].occupied) {
-          colComplete = false;
-          break;
+      if (colAdditions[x] > 0) {
+        // Column would be complete if current count + new cells = grid size
+        if (this.colCounts[x] + colAdditions[x] === this.size) {
+          completed.push(x + this.size);
         }
-      }
-      if (colComplete) {
-        completed.push(x + this.size);
       }
     }
 
@@ -250,8 +245,11 @@ export class Grid {
 
   // Clear a single cell at given position
   public clearCell(x: number, y: number): void {
-    if (this.isValidPosition(x, y)) {
+    if (this.isValidPosition(x, y) && this.cells[y][x].occupied) {
       this.cells[y][x] = { occupied: false, color: null };
+      // Update row/column counts
+      this.rowCounts[y]--;
+      this.colCounts[x]--;
     }
   }
 
@@ -350,6 +348,22 @@ export class Grid {
   // Set grid state (for AI evaluation)
   public setState(state: GridCell[][]): void {
     this.cells = clone2DArray(state);
+    // Recalculate row/column counts from the new state
+    this.recalculateCounts();
+  }
+
+  // Recalculate row/column counts from current cell state
+  private recalculateCounts(): void {
+    this.rowCounts.fill(0);
+    this.colCounts.fill(0);
+    for (let y = 0; y < this.size; y++) {
+      for (let x = 0; x < this.size; x++) {
+        if (this.cells[y][x].occupied) {
+          this.rowCounts[y]++;
+          this.colCounts[x]++;
+        }
+      }
+    }
   }
 
   // Get grid size

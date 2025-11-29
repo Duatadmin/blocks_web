@@ -36,6 +36,9 @@
       display: block;
       background-color: #0d1321;
       /* Canvas will be sized by JavaScript */
+      /* Optimize rendering for crisp edges on high-DPI displays */
+      image-rendering: -webkit-optimize-contrast;  /* Safari */
+      image-rendering: crisp-edges;                /* Standard */
     }
 
     /* Loading screen */

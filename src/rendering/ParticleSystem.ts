@@ -135,38 +135,50 @@ export class ParticleSystem {
   }
 
   // Render all active particles
+  // OPTIMIZED: Batches particles by color to minimize fillStyle changes
+  // Uses relative transforms (save/translate/rotate/scale/restore) to compose with existing transforms
   public render(ctx: CanvasRenderingContext2D): void {
-    ctx.save();
-
-    // Use additive blending for glow effect
-    ctx.globalCompositeOperation = 'lighter';
-
+    // Group active particles by color to minimize fillStyle changes
+    const byColor = new Map<string, Particle[]>();
     for (const p of this.particles) {
       if (!p.active) continue;
-
-      const lifeRatio = p.life / p.maxLife;
-
-      // Fade out opacity
-      const opacity = lifeRatio * 0.7; // 70% max opacity
-
-      // Current scale (shrinks over time)
-      const currentScale = p.scale * (0.5 + lifeRatio * 0.5);
-
-      ctx.save();
-      ctx.globalAlpha = opacity;
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.rotation);
-      ctx.scale(currentScale, currentScale);
-
-      // Draw particle (simple square)
-      const size = 20; // Base particle size
-      ctx.fillStyle = p.color;
-      ctx.fillRect(-size / 2, -size / 2, size, size);
-
-      ctx.restore();
+      const existing = byColor.get(p.color);
+      if (existing) {
+        existing.push(p);
+      } else {
+        byColor.set(p.color, [p]);
+      }
     }
 
-    ctx.restore();
+    // Skip if no active particles
+    if (byColor.size === 0) return;
+
+    const size = 20; // Base particle size
+    const halfSize = size / 2;
+
+    // Render particles batched by color
+    for (const [color, particles] of byColor) {
+      ctx.fillStyle = color;
+
+      for (const p of particles) {
+        const lifeRatio = p.life / p.maxLife;
+        const opacity = lifeRatio * 0.7; // 70% max opacity
+        const currentScale = p.scale * (0.5 + lifeRatio * 0.5);
+
+        // Use relative transforms to properly compose with existing transforms (e.g., screen shake)
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = opacity;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation);
+        ctx.scale(currentScale, currentScale);
+
+        // Draw particle centered at origin
+        ctx.fillRect(-halfSize, -halfSize, size, size);
+
+        ctx.restore();
+      }
+    }
   }
 
   // Check if any particles are active

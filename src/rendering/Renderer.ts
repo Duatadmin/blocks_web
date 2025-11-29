@@ -19,13 +19,20 @@ import { getShapeBounds } from '../data/figures';
 import { Point } from '../utils/math';
 import { lighten, darken, toRgba } from '../utils/colors';
 import { getComboFontFamily } from '../utils/fontLoader';
+import { BlockSpriteCache } from './BlockSpriteCache';
+
+// Interface for objects with .has() method (both Map and Set support this)
+interface HasMethod {
+  has(key: string): boolean;
+}
 
 export interface RenderState {
   grid: Grid;
   dropBlocks: (Block | null)[];
   dragState: DragState | null;
   highlightedCells: HighlightedCell[];
-  animatingCellKeys: Set<string>;  // Keys of cells being animated ("x,y") - skip in normal render
+  highlightedPositions: Set<string>;  // Cached Set of highlighted positions for O(1) lookups
+  animatingCells: HasMethod;  // Map or Set with .has() method - keys of cells being animated ("x,y")
   score: number;
   highScore: number;
   comboStreak: number;
@@ -59,9 +66,20 @@ export class Renderer {
   private containerY: number;
   private containerWidth: number;
   private containerHeight: number;
+  // Device pixel ratio for high-DPI (retina) display support
+  private dpr: number;
+  // Pre-rendered block sprites for performance
+  private blockSpriteCache: BlockSpriteCache;
+  // Cached gradient-only background (for home screen, game over) - rendered once
+  private gradientCache: OffscreenCanvas | null = null;
+  // Cached full background (gradient + container + grid lines) - rendered once
+  private backgroundCache: OffscreenCanvas | null = null;
 
-  constructor(ctx: CanvasRenderingContext2D) {
+  constructor(ctx: CanvasRenderingContext2D, dpr: number = 1) {
     this.ctx = ctx;
+    this.dpr = dpr;
+    // Initialize sprite cache for pre-rendered blocks (with DPR for crisp sprites)
+    this.blockSpriteCache = new BlockSpriteCache(dpr);
 
     // Calculate container position (centered horizontally)
     const gridWidth = GRID_SIZE * CELL_SIZE;
@@ -87,25 +105,130 @@ export class Renderer {
     return this.dropAreaY;
   }
 
-  // Clear the canvas with gradient background
-  public clear(): void {
-    // Vertical gradient per design spec
-    const gradient = this.ctx.createLinearGradient(0, 0, 0, VIEWPORT_HEIGHT);
+  // Initialize gradient-only cache (for home screen, game over)
+  private initializeGradientCache(): void {
+    if (this.gradientCache) return;
+
+    // Create at physical resolution for crisp rendering on high-DPI displays
+    this.gradientCache = new OffscreenCanvas(VIEWPORT_WIDTH * this.dpr, VIEWPORT_HEIGHT * this.dpr);
+    const ctx = this.gradientCache.getContext('2d')!;
+
+    // Scale context so drawing code uses logical coordinates
+    ctx.scale(this.dpr, this.dpr);
+
+    // Gradient background only
+    const gradient = ctx.createLinearGradient(0, 0, 0, VIEWPORT_HEIGHT);
     gradient.addColorStop(0, COLORS.BackgroundTop);
     gradient.addColorStop(1, COLORS.BackgroundBottom);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+  }
 
-    this.ctx.fillStyle = gradient;
-    this.ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+  // Initialize full background cache (gradient + container + grid lines)
+  // Called once - for gameplay screens
+  private initializeBackgroundCache(): void {
+    if (this.backgroundCache) return;
+
+    // Ensure gradient cache exists first
+    this.initializeGradientCache();
+
+    // Create at physical resolution for crisp rendering on high-DPI displays
+    this.backgroundCache = new OffscreenCanvas(VIEWPORT_WIDTH * this.dpr, VIEWPORT_HEIGHT * this.dpr);
+    const ctx = this.backgroundCache.getContext('2d')!;
+
+    // 1. Copy gradient from gradient cache (both are at physical resolution)
+    ctx.drawImage(this.gradientCache!, 0, 0);
+
+    // Scale context so drawing code uses logical coordinates
+    ctx.scale(this.dpr, this.dpr);
+
+    // 2. Grid container with shadow
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = COLORS.GridBackground;
+    this.roundRectOffscreen(ctx, this.containerX, this.containerY, this.containerWidth, this.containerHeight, GRID_CONTAINER_RADIUS);
+    ctx.fill();
+    ctx.restore();
+
+    // Container border
+    ctx.strokeStyle = darken(COLORS.GridBackground, 15);
+    ctx.lineWidth = 2;
+    this.roundRectOffscreen(ctx, this.containerX, this.containerY, this.containerWidth, this.containerHeight, GRID_CONTAINER_RADIUS);
+    ctx.stroke();
+
+    // Inner highlight
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1;
+    this.roundRectOffscreen(ctx, this.containerX + 1, this.containerY + 1, this.containerWidth - 2, this.containerHeight - 2, GRID_CONTAINER_RADIUS - 1);
+    ctx.stroke();
+
+    // 3. Grid lines (empty cells)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1;
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const screenX = this.gridOriginX + x * CELL_SIZE;
+        const screenY = this.gridOriginY + y * CELL_SIZE;
+        ctx.strokeRect(screenX + 0.5, screenY + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
+      }
+    }
+  }
+
+  // Helper for roundRect on offscreen canvas
+  private roundRectOffscreen(ctx: OffscreenCanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  // Clear the canvas with gradient only (for home screen, game over)
+  // OPTIMIZED: Uses pre-rendered offscreen canvas
+  public clearGradientOnly(): void {
+    if (!this.gradientCache) {
+      this.initializeGradientCache();
+    }
+    // Draw physical-resolution cache to logical coordinates (DPR transform handles scaling)
+    this.ctx.drawImage(this.gradientCache!, 0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+  }
+
+  // Clear the canvas with full cached background (gradient + grid container + grid lines)
+  // OPTIMIZED: Uses pre-rendered offscreen canvas instead of re-creating gradient
+  public clear(): void {
+    // Initialize cache on first call
+    if (!this.backgroundCache) {
+      this.initializeBackgroundCache();
+    }
+
+    // Draw physical-resolution cache to logical coordinates (DPR transform handles scaling)
+    this.ctx.drawImage(this.backgroundCache!, 0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+  }
+
+  // Invalidate cached backgrounds (call when DPR changes, e.g., on resize)
+  public invalidateCaches(): void {
+    this.gradientCache = null;
+    this.backgroundCache = null;
   }
 
   // Render the complete game state
+  // OPTIMIZED: Background (gradient, container, grid lines) is now cached
   public render(state: RenderState): void {
+    // Draw cached background (gradient + container + grid lines) - single drawImage
     this.clear();
+    // renderGridContainer() and renderGrid() are now part of cached background
     this.renderScore(state.score, state.highScore);
-    this.renderGridContainer();
-    this.renderGrid(state.grid);
-    this.renderHighlights(state.highlightedCells);
-    this.renderGridBlocks(state.grid, state.highlightedCells, state.animatingCellKeys);
+    this.renderHighlights(state.highlightedCells, state.highlightedPositions);
+    this.renderGridBlocks(state.grid, state.highlightedPositions, state.animatingCells);
     this.renderDropArea(state.dropBlocks, state.dragState);
     this.renderDragPreview(state.dragState);
   }
@@ -281,7 +404,7 @@ export class Renderer {
   }
 
   // Render highlighted cells (lines that would complete)
-  private renderHighlights(cells: HighlightedCell[]): void {
+  private renderHighlights(cells: HighlightedCell[], positionsSet: Set<string>): void {
     if (cells.length === 0) return;
 
     // Check if this is a combo (3+ lines worth of cells, roughly 24+ cells for 3 lines)
@@ -307,8 +430,8 @@ export class Renderer {
       }
     }
 
-    // Render destruction borders on top
-    this.renderDestructionBorders(cells, isCombo);
+    // Render destruction borders on top - pass cached Set to avoid re-creating it
+    this.renderDestructionBorders(cells, positionsSet, isCombo);
   }
 
   // Render golden glow behind cells for 3+ line combos
@@ -367,11 +490,12 @@ export class Renderer {
   }
 
   // Render glowing borders around cells that will be cleared
-  private renderDestructionBorders(cells: HighlightedCell[], isCombo: boolean): void {
+  // OPTIMIZED: Uses pre-cached Set and batches all border lines into single path
+  private renderDestructionBorders(cells: HighlightedCell[], cellSet: Set<string>, isCombo: boolean): void {
     if (cells.length === 0) return;
 
     const ctx = this.ctx;
-    const cellSet = new Set(cells.map(c => `${c.x},${c.y}`));
+    // cellSet is now pre-computed in DragDropManager - no allocation here
 
     // Get border color based on combo state
     const borderColor = isCombo ? COLORS.Gold : cells[0]?.color ? COLORS[cells[0].color] : COLORS.Gold;
@@ -382,6 +506,9 @@ export class Renderer {
     ctx.shadowColor = borderColor;
     ctx.shadowBlur = 4;
 
+    // Batch all border lines into a single path for better performance
+    ctx.beginPath();
+
     // Draw borders only on outer edges
     for (const cell of cells) {
       const screenX = this.gridOriginX + cell.x * CELL_SIZE;
@@ -391,50 +518,42 @@ export class Renderer {
       // Check each edge - draw border if neighbor is not in the set
       // Top edge
       if (!cellSet.has(`${cell.x},${cell.y - 1}`)) {
-        ctx.beginPath();
         ctx.moveTo(screenX + padding, screenY + padding);
         ctx.lineTo(screenX + CELL_SIZE - padding, screenY + padding);
-        ctx.stroke();
       }
 
       // Bottom edge
       if (!cellSet.has(`${cell.x},${cell.y + 1}`)) {
-        ctx.beginPath();
         ctx.moveTo(screenX + padding, screenY + CELL_SIZE - padding);
         ctx.lineTo(screenX + CELL_SIZE - padding, screenY + CELL_SIZE - padding);
-        ctx.stroke();
       }
 
       // Left edge
       if (!cellSet.has(`${cell.x - 1},${cell.y}`)) {
-        ctx.beginPath();
         ctx.moveTo(screenX + padding, screenY + padding);
         ctx.lineTo(screenX + padding, screenY + CELL_SIZE - padding);
-        ctx.stroke();
       }
 
       // Right edge
       if (!cellSet.has(`${cell.x + 1},${cell.y}`)) {
-        ctx.beginPath();
         ctx.moveTo(screenX + CELL_SIZE - padding, screenY + padding);
         ctx.lineTo(screenX + CELL_SIZE - padding, screenY + CELL_SIZE - padding);
-        ctx.stroke();
       }
     }
 
+    // Single stroke call for all borders
+    ctx.stroke();
     ctx.restore();
   }
 
   // Render blocks placed on the grid
   private renderGridBlocks(
     grid: Grid,
-    highlightedCells: HighlightedCell[] = [],
-    animatingCellKeys: Set<string> = new Set()
+    highlightedPositions: Set<string> = new Set(),
+    animatingCells: HasMethod = new Set()
   ): void {
-    // Create set of highlighted positions to skip (they're rendered with new color in renderHighlights)
-    const highlightedPositions = new Set(
-      highlightedCells.map(c => `${c.x},${c.y}`)
-    );
+    // highlightedPositions is now pre-computed and cached in DragDropManager
+    // This avoids creating a new Set + array.map() every frame
 
     grid.forEachCell((x, y, cell) => {
       const key = `${x},${y}`;
@@ -445,7 +564,7 @@ export class Renderer {
       }
 
       // Skip cells that are animating - they're rendered separately in renderAnimatingCells
-      if (animatingCellKeys.has(key)) {
+      if (animatingCells.has(key)) {
         return;
       }
 
@@ -458,7 +577,19 @@ export class Renderer {
   }
 
   // Render a single block with dark border for solid connected look
+  // OPTIMIZED: Uses pre-rendered sprites for standard sizes (56px, 28px, 16px)
   public renderBlock(x: number, y: number, size: number, color: BlockColor, opacity: number = 1.0): void {
+    // Try to use cached sprite first (1 drawImage vs 5 fill operations)
+    if (this.blockSpriteCache.drawBlock(this.ctx, x, y, size, color, opacity)) {
+      return;
+    }
+
+    // Fallback to direct rendering for non-standard sizes (e.g., scaled animations)
+    this.renderBlockDirect(x, y, size, color, opacity);
+  }
+
+  // Direct block rendering for non-standard sizes (not cached)
+  private renderBlockDirect(x: number, y: number, size: number, color: BlockColor, opacity: number): void {
     const colorHex = COLORS[color];
     const borderWidth = 1;               // Dark border width
     const radius = 2;                    // Nearly square corners
@@ -823,7 +954,7 @@ export class Renderer {
   // Render home screen
   public renderHomeScreen(highScore: number): void {
     const ctx = this.ctx;
-    this.clear();
+    this.clearGradientOnly();  // Use gradient only - no gameplay grid
 
     // Title "BLOCK PUZZLE" with 3-layer styled text
     this.drawStyledText(
