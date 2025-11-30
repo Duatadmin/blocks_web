@@ -358,10 +358,14 @@ export class ComboSignCache {
 
     ctx.save();
 
-    // Apply blur filter - scale by DPR for consistent visual blur on high-DPI displays
-    // Note: blur filter operates on physical pixels, not affected by ctx.scale()
-    // Use window.devicePixelRatio directly for reliability
-    ctx.filter = `blur(${blurRadius * (window.devicePixelRatio || 1)}px)`;
+    // Use shadowBlur instead of ctx.filter for Safari/iOS compatibility
+    // ctx.filter = 'blur()' is NOT supported on Safari!
+    // shadowBlur creates a blurred shadow behind the drawn content
+    // The crisp content will be covered by subsequent layers (extrude, outline, bevel, gloss)
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = blurRadius;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
 
     ctx.font = font;
     ctx.textAlign = 'center';

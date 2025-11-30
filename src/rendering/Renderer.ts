@@ -800,11 +800,12 @@ export class Renderer {
     ctx.save();
     ctx.translate(x, glowY);
 
-    // Apply blur for soft, dreamy rays (like reference image)
-    // Scale by DPR for consistent visual blur on high-DPI displays
-    // Note: blur filter operates on physical pixels, not affected by ctx.scale()
-    // Must use window.devicePixelRatio directly (this.dpr may be stale from init)
-    ctx.filter = `blur(${6 * (window.devicePixelRatio || 1)}px)`;
+    // Use shadowBlur instead of ctx.filter for Safari/iOS compatibility
+    // ctx.filter = 'blur()' is NOT supported on Safari!
+    ctx.shadowColor = 'rgba(255, 220, 100, 0.8)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
 
     // Use additive blending for all glow layers
     ctx.globalCompositeOperation = 'lighter';
