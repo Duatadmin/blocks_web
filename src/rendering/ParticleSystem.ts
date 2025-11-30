@@ -1,6 +1,6 @@
 // Canvas-based Particle System for block destruction effects
 
-import { PARTICLES, COLORS, BlockColor } from '../data/constants';
+import { PARTICLES, COLORS, BlockColor, LINE_CLEAR_SPARKS } from '../data/constants';
 import { lighten } from '../utils/colors';
 
 interface Particle {
@@ -196,5 +196,51 @@ export class ParticleSystem {
   // Get count of active particles (for debugging)
   public getActiveCount(): number {
     return this.particles.filter(p => p.active).length;
+  }
+
+  // Emit spark particles for line clear effect
+  // Sparks spray perpendicular to the line direction
+  public emitSparks(
+    x: number,
+    y: number,
+    lineDirection: 'horizontal' | 'vertical',
+    color?: string
+  ): void {
+    const count = LINE_CLEAR_SPARKS.SPARK_COUNT;
+    const baseColor = color || COLORS.Gold;
+    const brightenedColor = lighten(baseColor, 30);
+
+    for (let i = 0; i < count; i++) {
+      const particle = this.getInactiveParticle();
+      if (!particle) continue;
+
+      // Spray perpendicular to line direction
+      // For horizontal line: spray up/down
+      // For vertical line: spray left/right
+      let angle: number;
+      if (lineDirection === 'horizontal') {
+        // Spray mostly up/down with some randomness
+        angle = (Math.random() > 0.5 ? -Math.PI / 2 : Math.PI / 2) + (Math.random() - 0.5) * Math.PI * 0.5;
+      } else {
+        // Spray mostly left/right with some randomness
+        angle = (Math.random() > 0.5 ? 0 : Math.PI) + (Math.random() - 0.5) * Math.PI * 0.5;
+      }
+
+      const velocity = LINE_CLEAR_SPARKS.SPARK_VELOCITY * (0.8 + Math.random() * 0.4);
+      const scale = LINE_CLEAR_SPARKS.SPARK_SCALE_MIN +
+        Math.random() * (LINE_CLEAR_SPARKS.SPARK_SCALE_MAX - LINE_CLEAR_SPARKS.SPARK_SCALE_MIN);
+
+      particle.x = x;
+      particle.y = y;
+      particle.vx = Math.cos(angle) * velocity;
+      particle.vy = Math.sin(angle) * velocity;
+      particle.life = LINE_CLEAR_SPARKS.SPARK_LIFETIME;
+      particle.maxLife = LINE_CLEAR_SPARKS.SPARK_LIFETIME;
+      particle.scale = scale;
+      particle.rotation = Math.random() * Math.PI * 2;
+      particle.angularVelocity = (Math.random() - 0.5) * 15;
+      particle.color = brightenedColor;
+      particle.active = true;
+    }
   }
 }

@@ -1,7 +1,7 @@
 // Main Game Controller
 // Orchestrates all game systems
 
-import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION, GAME_OVER_FLOW, GAME_OVER_LAYOUT } from './data/constants';
+import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION, GAME_OVER_FLOW, GAME_OVER_LAYOUT, COLORS } from './data/constants';
 import { easeOutBack, easeInQuad } from './utils/easing';
 import { Grid } from './core/Grid';
 import { Block } from './core/Block';
@@ -12,6 +12,7 @@ import { InputManager, InputEvent } from './input/InputManager';
 import { DragDropManager } from './input/DragDropManager';
 import { AnimationManager, ScreenShake } from './effects/AnimationManager';
 import { ParticleSystem } from './rendering/ParticleSystem';
+import { LineGlowManager } from './effects/LineGlowVFX';
 import { Point, pointInRect } from './utils/math';
 import { loadComboFont } from './utils/fontLoader';
 
@@ -30,6 +31,7 @@ export type GameState =
 
 interface ComboNotification {
   comboNumber: number;
+  x: number;
   y: number;
   scale: number;
   opacity: number;
@@ -77,11 +79,13 @@ export class Game {
   private animationManager!: AnimationManager;
   private screenShake!: ScreenShake;
   private particleSystem!: ParticleSystem;
+  private lineGlowManager!: LineGlowManager;
 
   // Game state
   private dropBlocks: (Block | null)[] = [null, null, null];
   private comboNotification: ComboNotification | null = null;
   private isNewHighScore: boolean = false;
+  private lastPlacedBlockCenter: Point | null = null;
 
   // Game over flow state
   private gameOverState: GameOverState | null = null;
@@ -113,6 +117,12 @@ export class Game {
     this.animationManager = new AnimationManager();
     this.screenShake = new ScreenShake();
     this.particleSystem = new ParticleSystem();
+    // Initialize line glow manager with board geometry
+    const gridOrigin = this.renderer.getGridOrigin();
+    this.lineGlowManager = new LineGlowManager(
+      { x: gridOrigin.x, y: gridOrigin.y, width: GRID_SIZE * CELL_SIZE, height: GRID_SIZE * CELL_SIZE },
+      CELL_SIZE
+    );
 
     // Lazy load combo font (async, will be ready by first combo)
     loadComboFont();
@@ -361,6 +371,11 @@ export class Game {
       return;
     }
 
+    // Calculate center of placed block cells (for combo notification positioning)
+    const avgX = result.cellsPlaced.reduce((sum, c) => sum + c.x, 0) / result.cellsPlaced.length;
+    const avgY = result.cellsPlaced.reduce((sum, c) => sum + c.y, 0) / result.cellsPlaced.length;
+    this.lastPlacedBlockCenter = { x: avgX, y: avgY };
+
     // Clear the slot
     this.dropBlocks[slotIndex] = null;
     this.dragDropManager.setBlocks(this.dropBlocks);
@@ -424,14 +439,23 @@ export class Game {
       this.animatingCells.set(key, { scale: 1, opacity: 1, rotation: 0, color: cellColor });
     }
 
+    // Determine if this is a combo (2+ lines = golden beam)
+    const isCombo = lineIndices.length >= 2;
+    const gridOrigin = this.renderer.getGridOrigin();
+
+    // Spawn glow VFX for each cleared line (disabled - looks poor)
+    // Line indices: 0-7 = rows (horizontal), 8-15 = columns (vertical)
+    // this.lineGlowManager.spawnForLines(lineIndices);
+
     // Start screen shake
     const shakeIntensity = SCREEN_SHAKE.baseStrength + lineIndices.length * SCREEN_SHAKE.strengthPerLine;
     this.screenShake.shake(shakeIntensity, SCREEN_SHAKE.duration);
 
+    // Block destruction starts immediately with the beam (no delay)
+
     // Animate each cell with stagger
     const staggerDelay = ANIMATION.lineClearStagger;
     const animPromises: Promise<void>[] = [];
-    const gridOrigin = this.renderer.getGridOrigin();
 
     for (let i = 0; i < cellsToClear.length; i++) {
       const cell = cellsToClear[i];
@@ -444,11 +468,19 @@ export class Game {
       const screenX = gridOrigin.x + cell.x * CELL_SIZE + CELL_SIZE / 2;
       const screenY = gridOrigin.y + cell.y * CELL_SIZE + CELL_SIZE / 2;
 
-      // Particle direction based on cascade (opposite direction for "spray out" effect)
-      const particleDir = {
-        x: placementOnLeft ? 1 : -1,
-        y: -0.5  // Slightly upward
-      };
+      // Determine beam direction for this cell (for spark spray)
+      // Find which line this cell belongs to
+      let beamDirection: 'horizontal' | 'vertical' = 'horizontal';
+      for (const lineIndex of lineIndices) {
+        const isRow = lineIndex < GRID_SIZE;
+        if (isRow && cell.y === lineIndex) {
+          beamDirection = 'horizontal';
+          break;
+        } else if (!isRow && cell.x === lineIndex - GRID_SIZE) {
+          beamDirection = 'vertical';
+          break;
+        }
+      }
 
       // Track if particles have been emitted for this cell
       let particlesEmitted = false;
@@ -456,13 +488,16 @@ export class Game {
       animPromises.push(new Promise((resolve) => {
         this.animationManager.animateCellClear(
           (scale, opacity, rotation) => {
-            // Emit particles on FIRST callback (when animation actually starts after stagger)
+            // Emit spark particles on FIRST callback (when animation actually starts after stagger)
             if (!particlesEmitted) {
               particlesEmitted = true;
-              this.particleSystem.emit(screenX, screenY, {
-                color: cellColor,
-                direction: particleDir,
-              });
+              // Use emitSparks for beam effect (perpendicular spray)
+              this.particleSystem.emitSparks(
+                screenX,
+                screenY,
+                beamDirection,
+                isCombo ? COLORS.Gold : COLORS[cellColor]
+              );
             }
             // Update animation state (cell is ALREADY in animatingCells from initial loop)
             this.animatingCells.set(key, { scale, opacity, rotation, color: cellColor });
@@ -512,13 +547,24 @@ export class Game {
     if (result.comboStreak < 1) return;
 
     const gridOrigin = this.renderer.getGridOrigin();
-    const startY = gridOrigin.y + (GRID_SIZE * CELL_SIZE) / 2;
+
+    // Position combo sign at the last placed block location
+    let startX = VIEWPORT_WIDTH / 2;  // Default center
+    let startY = gridOrigin.y + (GRID_SIZE * CELL_SIZE) / 2;  // Default center
+
+    if (this.lastPlacedBlockCenter) {
+      // Clamp grid X to columns 1-6 to prevent rendering off-screen
+      const clampedGridX = Math.max(1, Math.min(6, this.lastPlacedBlockCenter.x));
+      startX = gridOrigin.x + clampedGridX * CELL_SIZE + CELL_SIZE / 2;
+      startY = gridOrigin.y + this.lastPlacedBlockCenter.y * CELL_SIZE + CELL_SIZE / 2;
+    }
 
     // Combo number is streak + 1 (first combo shows "Combo 2")
     const comboNumber = result.comboStreak + 1;
 
     this.comboNotification = {
       comboNumber,
+      x: startX,
       y: startY,
       scale: 0.3,  // Start small for zoom-in
       opacity: 1,
@@ -939,6 +985,9 @@ export class Game {
 
     // Update particle system
     this.particleSystem.update(deltaTime);
+
+    // Update line glow effects (expects seconds)
+    this.lineGlowManager.update(deltaTime);
   }
 
   private render(): void {
@@ -1021,19 +1070,23 @@ export class Game {
 
     this.renderer.render(state);
 
+    // Render particles (under blocks/effects)
+    this.particleSystem.render(this.ctx);
+
     // Render intro/game over animation cells
     this.renderIntroAnimCells();
 
+    // Render line glow effects (after grid, before animating cells)
+    this.lineGlowManager.draw(this.ctx);
+
     // Render animating cells (being cleared)
     this.renderAnimatingCells();
-
-    // Render particles (on top of blocks)
-    this.particleSystem.render(this.ctx);
 
     // Render combo notification
     if (this.comboNotification) {
       this.renderer.renderComboNotification(
         this.comboNotification.comboNumber,
+        this.comboNotification.x,
         this.comboNotification.y,
         this.comboNotification.scale,
         this.comboNotification.opacity,

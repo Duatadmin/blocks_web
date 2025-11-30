@@ -20,6 +20,7 @@ import { Point } from '../utils/math';
 import { lighten, darken, toRgba } from '../utils/colors';
 import { getComboFontFamily } from '../utils/fontLoader';
 import { BlockSpriteCache } from './BlockSpriteCache';
+import { drawComboSign, DEFAULT_WORD_COLORS, DEFAULT_NUMBER_COLORS, getNumberCenterX } from './ComboSign';
 
 // Interface for objects with .has() method (both Map and Set support this)
 interface HasMethod {
@@ -749,9 +750,10 @@ export class Renderer {
     this.ctx.restore();
   }
 
-  // Render combo notification with styled text and starburst VFX
+  // Render combo notification with premium 6-layer 3D text effect
   public renderComboNotification(
     comboNumber: number,
+    x: number,
     y: number,
     scale: number = 1.0,
     opacity: number = 1.0,
@@ -760,125 +762,153 @@ export class Renderer {
   ): void {
     if (comboNumber < 2) return;
 
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.globalAlpha = opacity;
-    ctx.translate(VIEWPORT_WIDTH / 2, y);
-    ctx.scale(scale, scale);
+    // Calculate actual number center position (accounts for text widths and gap)
+    const numberCenterX = getNumberCenterX('Combo', comboNumber, x, COMBO_NOTIFICATION.COMBO_FONT_SIZE);
 
-    // Measure text widths for positioning
-    const comboText = 'Combo';
-    const numberText = comboNumber.toString();
+    // Draw starburst BEHIND the NUMBER at its actual center
+    this.drawStarburst(numberCenterX, y, starburstScale, opacity, rotation);
 
-    ctx.font = `italic bold ${COMBO_NOTIFICATION.COMBO_FONT_SIZE}px ${getComboFontFamily()}`;
-    const comboWidth = ctx.measureText(comboText).width;
-
-    ctx.font = `italic bold ${COMBO_NOTIFICATION.NUMBER_FONT_SIZE}px ${getComboFontFamily()}`;
-    const numberWidth = ctx.measureText(numberText).width;
-
-    const gap = 8;
-    const totalWidth = comboWidth + gap + numberWidth;
-    const comboX = -totalWidth / 2 + comboWidth / 2;
-    const numberX = totalWidth / 2 - numberWidth / 2;
-
-    // 1. Draw starburst VFX behind number (with pulsing scale, opacity, and rotation)
-    this.drawStarburst(numberX, 0, starburstScale, opacity, rotation);
-
-    // 2. Draw "Combo" text (3-layer: dark blue stroke, cyan fill, white highlight)
-    this.drawStyledText(
-      comboText,
-      comboX,
-      0,
-      COMBO_NOTIFICATION.COMBO_FONT_SIZE,
-      COMBO_NOTIFICATION.COMBO_FILL_COLOR,        // Layer 2: Cyan fill
-      COMBO_NOTIFICATION.COMBO_STROKE_COLOR,      // Layer 1: Dark blue stroke
-      COMBO_NOTIFICATION.COMBO_HIGHLIGHT_COLOR    // Layer 3: White highlight
-    );
-
-    // 3. Draw number (3-layer: dark blue stroke, gold gradient fill, light yellow highlight)
-    this.drawStyledText(
-      numberText,
-      numberX,
-      0,
-      COMBO_NOTIFICATION.NUMBER_FONT_SIZE,
-      { top: COMBO_NOTIFICATION.NUMBER_FILL_TOP, bottom: COMBO_NOTIFICATION.NUMBER_FILL_BOTTOM },
-      COMBO_NOTIFICATION.NUMBER_STROKE_COLOR,     // Layer 1: Dark blue stroke
-      COMBO_NOTIFICATION.NUMBER_HIGHLIGHT_COLOR   // Layer 3: Light yellow highlight
-    );
-
-    ctx.restore();
+    // Draw text on top using 6-layer ComboSign renderer
+    drawComboSign(this.ctx, {
+      comboText: 'Combo',
+      value: comboNumber,
+      centerX: x,
+      centerY: y,
+      baseFontSize: COMBO_NOTIFICATION.COMBO_FONT_SIZE,
+      wordColorScheme: DEFAULT_WORD_COLORS,
+      numberColorScheme: DEFAULT_NUMBER_COLORS,
+      scale,
+      opacity,
+    });
   }
 
-  // Draw starburst rays effect - soft glow with WHITE rays
+  // Draw starburst rays effect - enhanced dual-layer glow with varied rays
   private drawStarburst(x: number, y: number, pulseScale: number, opacity: number = 1, rotation: number = 0): void {
     const ctx = this.ctx;
     const rays = COMBO_NOTIFICATION.STARBURST_RAYS;
-    const innerRadius = COMBO_NOTIFICATION.STARBURST_INNER_RADIUS * pulseScale;
+
+    // Scale radii with pulse
+    const coreRadius = COMBO_NOTIFICATION.STARBURST_CORE_RADIUS * pulseScale;
+    const haloRadius = COMBO_NOTIFICATION.STARBURST_HALO_RADIUS * pulseScale;
     const outerRadius = COMBO_NOTIFICATION.STARBURST_OUTER_RADIUS * pulseScale;
-    const glowRadius = COMBO_NOTIFICATION.STARBURST_GLOW_LAYER_RADIUS * pulseScale;
-    const rayOpacity = COMBO_NOTIFICATION.STARBURST_RAY_OPACITY;
-    const glowOpacity = COMBO_NOTIFICATION.STARBURST_GLOW_LAYER_OPACITY;
+    const innerRadius = COMBO_NOTIFICATION.STARBURST_INNER_RADIUS * pulseScale;
+
+    // Offset glow center downward for "light from below" effect
+    const offsetY = COMBO_NOTIFICATION.STARBURST_GLOW_OFFSET_Y;
+    const glowY = y + offsetY;
 
     ctx.save();
-    ctx.translate(x, y);
+    ctx.translate(x, glowY);
 
-    // LAYER 1: Soft radial glow halo (drawn BEFORE rays, no rotation)
-    const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, glowRadius);
-    glowGradient.addColorStop(0, `rgba(255, 255, 255, ${glowOpacity * opacity})`);
-    glowGradient.addColorStop(0.5, `rgba(255, 255, 255, ${glowOpacity * 0.5 * opacity})`);
-    glowGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = glowGradient;
+    // Apply blur for soft, dreamy rays (like reference image)
+    ctx.filter = 'blur(6px)';
+
+    // Use additive blending for all glow layers
+    ctx.globalCompositeOperation = 'lighter';
+
+    // ========================================
+    // LAYER 1: Outer golden halo (largest, softest)
+    // ========================================
+    const haloGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, haloRadius);
+    haloGradient.addColorStop(0, `rgba(255, 220, 100, ${COMBO_NOTIFICATION.STARBURST_HALO_OPACITY * opacity})`);
+    haloGradient.addColorStop(0.4, `rgba(255, 220, 100, ${COMBO_NOTIFICATION.STARBURST_HALO_OPACITY * 0.4 * opacity})`);
+    haloGradient.addColorStop(1, 'rgba(255, 220, 100, 0)');
+
+    ctx.fillStyle = haloGradient;
     ctx.beginPath();
-    ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+    ctx.arc(0, 0, haloRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Apply rotation for rays only
+    // ========================================
+    // LAYER 2: Soft rays with variation
+    // ========================================
     ctx.rotate(rotation);
 
-    // LAYER 2: Soft rays with reduced opacity
-    // Create gradient with 50% reduced opacity values
-    const gradient = ctx.createRadialGradient(0, 0, innerRadius, 0, 0, outerRadius);
-    gradient.addColorStop(0, `rgba(255, 255, 255, ${rayOpacity * opacity})`);
-    gradient.addColorStop(0.4, `rgba(255, 255, 255, ${0.30 * opacity})`);
-    gradient.addColorStop(0.7, `rgba(255, 255, 255, ${0.125 * opacity})`);
-    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    // Seeded random for consistent ray variation
+    const seed = 42;
+    let randomState = seed;
+    const seededRandom = (): number => {
+      randomState = (randomState * 1103515245 + 12345) & 0x7fffffff;
+      return randomState / 0x7fffffff;
+    };
 
-    ctx.fillStyle = gradient;
+    // Determine hero ray indices (2-4 longer/brighter rays)
+    const heroCount = COMBO_NOTIFICATION.STARBURST_HERO_RAYS;
+    const heroIndices = new Set<number>();
+    for (let i = 0; i < heroCount; i++) {
+      heroIndices.add(Math.floor(seededRandom() * rays * 2));
+    }
 
-    // Draw alternating long and short rays (wider for softer appearance)
+    const lengthVar = COMBO_NOTIFICATION.STARBURST_RAY_LENGTH_VAR;
+    const opacityVar = COMBO_NOTIFICATION.STARBURST_RAY_OPACITY_VAR;
+    const baseRayOpacity = COMBO_NOTIFICATION.STARBURST_RAY_OPACITY;
+
+    // Draw rays (rays * 2 total, alternating)
     for (let i = 0; i < rays * 2; i++) {
-      const angle = (i * Math.PI) / rays;
+      const isHero = heroIndices.has(i);
       const isLong = i % 2 === 0;
-      const rayLength = isLong ? outerRadius : outerRadius * 0.6;
-      const rayWidth = isLong ? 0.20 : 0.12;  // Wider rays for softer look (was 0.12 : 0.06)
 
+      // Base angle with slight randomness
+      const baseAngle = (i * Math.PI) / rays;
+      const angleOffset = (seededRandom() - 0.5) * 0.15;
+      const angle = baseAngle + angleOffset;
+
+      // Ray length with variation
+      const baseLengthMult = isLong ? 1.0 : 0.55;
+      const lengthMult = baseLengthMult + (seededRandom() - 0.5) * 2 * lengthVar;
+      const rayLength = outerRadius * (isHero ? lengthMult * 1.35 : lengthMult);
+
+      // Ray opacity with variation
+      let rayOpacity = baseRayOpacity + (seededRandom() - 0.5) * 2 * opacityVar;
+      rayOpacity = isHero ? Math.min(rayOpacity * 1.4, 0.85) : rayOpacity;
+      rayOpacity = Math.max(0.2, Math.min(0.85, rayOpacity)); // Clamp
+
+      // Ray width (wider for hero rays, softer look)
+      const rayWidth = isLong ? 0.18 : 0.10;
+      const finalWidth = isHero ? rayWidth * 1.3 : rayWidth;
+
+      // Create gradient from center to tip (golden rays, fades out for soft tips)
+      const gradient = ctx.createRadialGradient(0, 0, innerRadius, 0, 0, rayLength);
+      gradient.addColorStop(0, `rgba(255, 235, 150, ${rayOpacity * opacity})`);
+      gradient.addColorStop(0.4, `rgba(255, 235, 150, ${rayOpacity * 0.5 * opacity})`);
+      gradient.addColorStop(0.7, `rgba(255, 235, 150, ${rayOpacity * 0.15 * opacity})`);
+      gradient.addColorStop(1, 'rgba(255, 235, 150, 0)');
+
+      ctx.fillStyle = gradient;
+
+      // Draw ray as triangle (thicker, softer appearance)
       ctx.beginPath();
       ctx.moveTo(
-        Math.cos(angle - rayWidth) * innerRadius,
-        Math.sin(angle - rayWidth) * innerRadius
+        Math.cos(angle - finalWidth) * innerRadius,
+        Math.sin(angle - finalWidth) * innerRadius
       );
       ctx.lineTo(
         Math.cos(angle) * rayLength,
         Math.sin(angle) * rayLength
       );
       ctx.lineTo(
-        Math.cos(angle + rayWidth) * innerRadius,
-        Math.sin(angle + rayWidth) * innerRadius
+        Math.cos(angle + finalWidth) * innerRadius,
+        Math.sin(angle + finalWidth) * innerRadius
       );
       ctx.closePath();
       ctx.fill();
     }
 
-    // LAYER 3: Center glow circle (no rotation needed)
-    ctx.rotate(-rotation); // Reset rotation for center glow
-    const centerGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, innerRadius * 2.5);
-    centerGradient.addColorStop(0, `rgba(255, 255, 255, ${0.45 * opacity})`);  // 50% of 0.9
-    centerGradient.addColorStop(0.4, `rgba(255, 255, 255, ${0.25 * opacity})`); // 50% of 0.5
-    centerGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    // Reset rotation for center glow
+    ctx.rotate(-rotation);
 
-    ctx.fillStyle = centerGradient;
+    // ========================================
+    // LAYER 3: Bright core bloom (on top)
+    // ========================================
+    const coreGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius);
+    coreGradient.addColorStop(0, `rgba(255, 255, 255, ${COMBO_NOTIFICATION.STARBURST_CORE_OPACITY * opacity})`);
+    coreGradient.addColorStop(0.35, `rgba(255, 255, 255, ${0.5 * opacity})`);
+    coreGradient.addColorStop(0.7, `rgba(255, 255, 255, ${0.15 * opacity})`);
+    coreGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    ctx.fillStyle = coreGradient;
     ctx.beginPath();
-    ctx.arc(0, 0, innerRadius * 2.5, 0, Math.PI * 2);
+    ctx.arc(0, 0, coreRadius, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();

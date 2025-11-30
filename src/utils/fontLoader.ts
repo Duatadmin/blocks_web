@@ -1,6 +1,6 @@
 // Lazy font loader - loads custom fonts asynchronously
 
-export const COMBO_FONT_FAMILY = 'TikTokSans';
+export const COMBO_FONT_FAMILY = 'TikTokSansCondensed';
 
 let comboFontLoaded = false;
 let comboFontLoading = false;
@@ -16,7 +16,7 @@ export function loadComboFont(): void {
 
   const font = new FontFace(
     COMBO_FONT_FAMILY,
-    'url(/assets/fonts/TikTokSans_18pt-SemiBold.ttf)'
+    'url(/assets/fonts/TikTokSans36pt-ExtraBoldItalic.otf)'
   );
 
   font.load()

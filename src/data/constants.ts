@@ -44,15 +44,15 @@ export const SCORE = {
 // Particle system
 export const PARTICLES = {
   burstCount: 4,
-  minVelocity: 30,
-  maxVelocity: 80,
+  minVelocity: 8,       // 100% more slower (was 15)
+  maxVelocity: 20,      // 100% more slower (was 40)
   lifetime: 0.3,
   lifetimeVariance: 0.2,
   gravity: 150,
   spreadAngle: 60, // degrees
   spreadVariance: 5, // degrees
-  minScale: 0.1,
-  maxScale: 0.3,
+  minScale: 0.4,        // 100% more bigger (was 0.2)
+  maxScale: 1.2,        // 100% more bigger (was 0.6)
 };
 
 // Screen shake
@@ -269,26 +269,79 @@ export const COMBO_NOTIFICATION = {
   NUMBER_FILL_BOTTOM: '#F5C518',      // Layer 2: Gold gradient bottom
   NUMBER_HIGHLIGHT_COLOR: '#FFFDE7',  // Layer 3: Light yellow highlight
 
-  // Starburst VFX - WHITE rays
-  STARBURST_RAYS: 12,
-  STARBURST_INNER_RADIUS: 8,
-  STARBURST_OUTER_RADIUS: 60,
+  // Starburst VFX - Enhanced rays
+  STARBURST_RAYS: 7,                  // Reduced from 12 (14 total with doubles)
+  STARBURST_INNER_RADIUS: 12,         // Slightly larger core
+  STARBURST_OUTER_RADIUS: 50,         // Reduced from 60
   STARBURST_COLOR: 'rgba(255, 255, 255, 0.9)',
 
-  // Soft glow layer (behind rays)
-  STARBURST_RAY_OPACITY: 0.475,       // 50% of original 0.95
+  // Dual-layer glow
+  STARBURST_CORE_RADIUS: 35,          // Bright core radius
+  STARBURST_HALO_RADIUS: 50,          // Soft halo radius (smaller)
+  STARBURST_CORE_OPACITY: 0.9,        // Bright white core
+  STARBURST_HALO_OPACITY: 0.35,       // Soft warm halo
+
+  // Ray variation
+  STARBURST_RAY_OPACITY: 0.5,         // Base ray opacity
+  STARBURST_RAY_LENGTH_VAR: 0.35,     // ±35% length variation
+  STARBURST_RAY_OPACITY_VAR: 0.25,    // ±0.25 opacity variation
+  STARBURST_HERO_RAYS: 3,             // Number of "hero" longer rays
+
+  // Glow offset
+  STARBURST_GLOW_OFFSET_Y: 5,         // Offset down 5px for "light from below"
+
+  // Animation params
   STARBURST_GLOW_LAYER_OPACITY: 0.3,  // Soft background glow
-  STARBURST_GLOW_LAYER_RADIUS: 80,    // Larger than ray outer radius
+  STARBURST_GLOW_LAYER_RADIUS: 60,    // Background glow radius (smaller)
   STARBURST_ROTATION_DEGREES: 10,     // Total rotation over animation
 
   // Animation timing
   ZOOM_IN_DURATION: 150,
-  HOLD_DURATION: 400,                 // Extended from 200ms (800ms total)
+  HOLD_DURATION: 600,                 // 50% longer (was 400ms)
   FADE_DURATION: 250,
-  PULSE_SPEED: 4,                     // 100% slower (was 8)
+  PULSE_SPEED: 2,                     // 50% slower (was 4)
   PULSE_MIN_SCALE: 0.9,               // Reduced amplitude (was 0.8)
   PULSE_MAX_SCALE: 1.1,               // Reduced amplitude (was 1.2)
   INITIAL_SCALE: 0.3,
+};
+
+// Line glow VFX - Animated rounded rectangle outline for line destruction
+export const LINE_GLOW_VFX = {
+  // Timing
+  DURATION: 0.45,             // Total animation duration in seconds
+
+  // Colors - Warm yellow/cream theme (original)
+  STROKE_COLOR: '#FFE8A0',    // Light warm yellow/cream
+  GLOW_COLOR: '#FFF5C8',      // Brighter yellow for glow
+  FILL_COLOR: '#FFF5C8',      // Same as glow for inner fill
+
+  // Line dimensions
+  LINE_WIDTH_MIN: 1,          // Starting line width (px)
+  LINE_WIDTH_MAX: 2,          // Peak line width (px)
+
+  // Corner radius (less rounded, not pill-like)
+  CORNER_RADIUS_RATIO: 0.15,  // Subtle rounded corners
+
+  // Glow settings
+  GLOW_BLUR: 20,              // Shadow blur radius for glow effect
+
+  // Rectangle size ratios
+  INITIAL_WIDTH_RATIO: 0.6,   // Starting width ratio
+  INITIAL_HEIGHT_RATIO: 0.6,  // Starting height ratio
+  FINAL_WIDTH_RATIO: 0.8,     // Final width (don't expand to full cell)
+  FINAL_HEIGHT_RATIO: 1.0,    // Final height (full length of line)
+
+  // Opacity settings
+  FILL_ALPHA: 0.0625,         // Inner fill opacity (75% reduction from 0.25)
+};
+
+// Spark particles emitted during cell destruction (used by ParticleSystem)
+export const LINE_CLEAR_SPARKS = {
+  SPARK_COUNT: 4,             // Sparks per cell destruction
+  SPARK_VELOCITY: 60,         // Spark velocity in pixels/sec
+  SPARK_LIFETIME: 0.2,        // Spark lifetime in seconds
+  SPARK_SCALE_MIN: 0.90,      // Min spark scale (200% bigger)
+  SPARK_SCALE_MAX: 1.50,      // Max spark scale (200% bigger)
 };
 
 // Home screen styling

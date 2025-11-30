@@ -132,6 +132,16 @@ export function rgbToHsl(r: number, g: number, b: number): { h: number; s: numbe
   };
 }
 
+// Saturate a color (increase saturation)
+export function saturate(color: string, amount: number): string {
+  const rgb = hexToRgb(color);
+  if (!rgb) return color;
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  hsl.s = Math.min(100, hsl.s + amount);
+  const newRgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+  return rgbToHex(newRgb.r, newRgb.g, newRgb.b);
+}
+
 // Create a gradient array from a base color
 export function createGradientStops(baseColor: string, stops: number = 3): string[] {
   const result: string[] = [];

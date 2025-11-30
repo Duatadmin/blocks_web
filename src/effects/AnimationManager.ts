@@ -277,7 +277,9 @@ export class AnimationManager {
       onUpdate: (progress) => {
         opacity = 1 - progress;
         scale = 1 - progress * 0.2; // Slight shrink during fade
-        onUpdate(y, scale, opacity, getStarburstScale(), getRotation());
+        // Shrink starburst to 0 so it disappears with the text
+        const starburstScale = getStarburstScale() * (1 - progress);
+        onUpdate(y, scale, opacity, starburstScale, getRotation());
       },
       onComplete,
     });
