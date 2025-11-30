@@ -14,7 +14,7 @@ import { AnimationManager, ScreenShake } from './effects/AnimationManager';
 import { ParticleSystem } from './rendering/ParticleSystem';
 import { LineGlowManager } from './effects/LineGlowVFX';
 import { Point, pointInRect } from './utils/math';
-import { loadComboFont } from './utils/fontLoader';
+import { loadComboFont, loadScoreFont } from './utils/fontLoader';
 
 export type GameState =
   | 'loading'
@@ -39,6 +39,17 @@ interface ComboNotification {
   rotation: number;
 }
 
+interface ConfettiParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  color: string;
+  size: number;
+  rotation: number;
+  rotationSpeed: number;
+}
+
 interface GameOverState {
   overlayOpacity: number;
   previewBlocks: Block[];
@@ -54,6 +65,9 @@ interface GameOverState {
   showNewHighScoreBadge: boolean;
   badgeScale: number;
   badgeOpacity: number;
+  confetti: ConfettiParticle[];
+  burstConfetti: ConfettiParticle[];
+  confettiPhase: 'burst' | 'falling' | 'none';
 }
 
 export class Game {
@@ -86,6 +100,8 @@ export class Game {
   private comboNotification: ComboNotification | null = null;
   private isNewHighScore: boolean = false;
   private lastPlacedBlockCenter: Point | null = null;
+  private displayedScore: number = 0;  // Animated score for display
+  private heartPulsePhase: number = 0;  // 0 to 2π for combo heart pulsing
 
   // Game over flow state
   private gameOverState: GameOverState | null = null;
@@ -124,8 +140,18 @@ export class Game {
       CELL_SIZE
     );
 
-    // Lazy load combo font (async, will be ready by first combo)
+    // Lazy load fonts (async, will be ready when needed)
     loadComboFont();
+    loadScoreFont();
+
+    // Lazy load header image (async, will be ready by home screen display)
+    this.renderer.loadHeaderImage();
+
+    // Load crown image for high score badge
+    this.renderer.loadCrownImage();
+
+    // Load heart image for combo indicator
+    this.renderer.loadHeartImage();
 
     // Set up drag drop manager with callbacks
     this.dragDropManager = new DragDropManager(
@@ -233,12 +259,9 @@ export class Game {
 
   private handleGameOverScreenInput(pos: Point): void {
     const playAgainBtn = this.renderer.getPlayAgainButtonBounds();
-    const homeBtn = this.renderer.getHomeButtonBounds();
 
     if (pointInRect(pos, playAgainBtn)) {
       this.startGame();
-    } else if (pointInRect(pos, homeBtn)) {
-      this.goToHome();
     }
   }
 
@@ -255,6 +278,7 @@ export class Game {
     this.blockGenerator.reset();
     this.scoreManager.reset();
     this.isNewHighScore = false;
+    this.displayedScore = 0;
     this.comboNotification = null;
     this.animatingCells.clear();
     this.introAnimCells.clear();
@@ -390,6 +414,7 @@ export class Game {
       // No lines cleared - clear highlights immediately and process placement
       this.dragDropManager.clearHighlights();
       this.scoreManager.processPlacement(result.pointsFromPlacement, 0, false);
+      this.animateScoreChange();
       this.checkGameState();
     }
   }
@@ -528,6 +553,9 @@ export class Game {
       isFieldClear
     );
 
+    // Animate score count-up
+    this.animateScoreChange();
+
     // Update high score flag
     if (this.scoreManager.getScore() === this.scoreManager.getHighScore() &&
         this.scoreManager.getHighScore() > 0) {
@@ -540,6 +568,26 @@ export class Game {
     // Return to playing state
     this.state = 'playing';
     this.checkGameState();
+  }
+
+  // Animate the displayed score counting up to the actual score
+  private animateScoreChange(): void {
+    const targetScore = this.scoreManager.getScore();
+    const pointsToAdd = targetScore - this.displayedScore;
+
+    if (pointsToAdd <= 0) return;
+
+    // Scale duration with points (min 150ms, max 400ms)
+    const duration = Math.min(400, Math.max(150, pointsToAdd * 3));
+
+    this.animationManager.tween({
+      from: this.displayedScore,
+      to: targetScore,
+      duration,
+      onUpdate: (value) => {
+        this.displayedScore = Math.floor(value);
+      },
+    });
   }
 
   private showComboNotification(result: ComboResult): void {
@@ -627,6 +675,9 @@ export class Game {
       showNewHighScoreBadge: false,
       badgeScale: 0,
       badgeOpacity: 0,
+      confetti: [],
+      burstConfetti: [],
+      confettiPhase: 'none',
     };
 
     // Phase 1: Fill animation
@@ -901,6 +952,10 @@ export class Game {
     // Update best score in state (high score is auto-saved by ScoreManager during gameplay)
     if (this.gameOverState) {
       this.gameOverState.bestScore = this.scoreManager.getHighScore();
+      // Initialize burst confetti from bottom corners
+      this.gameOverState.burstConfetti = this.createBurstConfetti(60);
+      this.gameOverState.confettiPhase = 'burst';
+      this.gameOverState.confetti = [];
     }
 
     const { TITLE_DROP_DURATION, SCORE_COUNT_DURATION, HIGH_SCORE_BADGE_DELAY, HIGH_SCORE_BADGE_SCALE_DURATION } = GAME_OVER_FLOW;
@@ -963,7 +1018,111 @@ export class Game {
       });
     }
 
-    // Screen is now showing - wait for user input (handled in handleGlobalInput)
+    // Screen is now showing - start falling confetti after burst settles
+    setTimeout(() => {
+      if (this.gameOverState && this.state === 'gameover_screen') {
+        this.gameOverState.confettiPhase = 'falling';
+        this.gameOverState.confetti = this.createConfettiParticles(40);
+      }
+    }, 2000);  // Wait for burst to settle before starting falling confetti
+  }
+
+  // Confetti colors matching the reference (colorful squares)
+  private static readonly CONFETTI_COLORS = [
+    '#FFD700',  // Gold/Yellow
+    '#FF6B6B',  // Red/Coral
+    '#4ECDC4',  // Teal/Cyan
+    '#45B7D1',  // Light Blue
+    '#96E6A1',  // Light Green
+    '#DDA0DD',  // Plum/Pink
+    '#F7DC6F',  // Light Yellow
+  ];
+
+  private createConfettiParticles(count: number): ConfettiParticle[] {
+    const particles: ConfettiParticle[] = [];
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x: Math.random() * VIEWPORT_WIDTH,
+        y: -20 - Math.random() * 200,  // Start above screen, staggered
+        vx: (Math.random() - 0.5) * 30,  // Slight horizontal drift
+        vy: 40 + Math.random() * 40,  // Fall speed
+        color: Game.CONFETTI_COLORS[Math.floor(Math.random() * Game.CONFETTI_COLORS.length)],
+        size: 4 + Math.random() * 6,  // 4-10px squares
+        rotation: Math.random() * Math.PI * 2,
+        rotationSpeed: (Math.random() - 0.5) * 4,  // Rotation speed
+      });
+    }
+    return particles;
+  }
+
+  // Create burst confetti that shoots up from bottom corners (V-shape fountain)
+  private createBurstConfetti(count: number): ConfettiParticle[] {
+    const particles: ConfettiParticle[] = [];
+    for (let i = 0; i < count; i++) {
+      // Alternate between left and right corners
+      const fromLeft = i % 2 === 0;
+      const startX = fromLeft ? 0 : VIEWPORT_WIDTH;
+      const startY = VIEWPORT_HEIGHT;
+
+      // Shoot upward at angle (toward center-top)
+      const baseAngle = fromLeft ? -Math.PI * 0.35 : -Math.PI * 0.65;  // -63° or -117°
+      const angleVariance = (Math.random() - 0.5) * 0.5;  // ±~14°
+      const angle = baseAngle + angleVariance;
+
+      const speed = 500 + Math.random() * 300;  // Fast initial burst
+
+      particles.push({
+        x: startX + (fromLeft ? Math.random() * 30 : -Math.random() * 30),
+        y: startY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: Game.CONFETTI_COLORS[Math.floor(Math.random() * Game.CONFETTI_COLORS.length)],
+        size: 5 + Math.random() * 6,  // 5-11px squares
+        rotation: Math.random() * Math.PI * 2,
+        rotationSpeed: (Math.random() - 0.5) * 8,  // Faster rotation for burst
+      });
+    }
+    return particles;
+  }
+
+  private updateConfetti(deltaTime: number): void {
+    if (!this.gameOverState) return;
+
+    // Update burst confetti (apply gravity, no recycling - let them fall off)
+    if (this.gameOverState.burstConfetti && this.gameOverState.burstConfetti.length > 0) {
+      for (const p of this.gameOverState.burstConfetti) {
+        p.vy += 600 * deltaTime;  // Gravity
+        p.x += p.vx * deltaTime;
+        p.y += p.vy * deltaTime;
+        p.rotation += p.rotationSpeed * deltaTime;
+      }
+      // Remove particles that fell off screen
+      this.gameOverState.burstConfetti = this.gameOverState.burstConfetti.filter(
+        p => p.y < VIEWPORT_HEIGHT + 50
+      );
+    }
+
+    // Update falling confetti (existing logic with recycling)
+    if (this.gameOverState.confettiPhase === 'falling' && this.gameOverState.confetti) {
+      for (const p of this.gameOverState.confetti) {
+        // Update position
+        p.x += p.vx * deltaTime;
+        p.y += p.vy * deltaTime;
+        p.rotation += p.rotationSpeed * deltaTime;
+
+        // Wrap around horizontally
+        if (p.x < -10) p.x = VIEWPORT_WIDTH + 10;
+        if (p.x > VIEWPORT_WIDTH + 10) p.x = -10;
+
+        // Reset particles that fall off the bottom
+        if (p.y > VIEWPORT_HEIGHT + 20) {
+          p.y = -20 - Math.random() * 50;
+          p.x = Math.random() * VIEWPORT_WIDTH;
+          p.vx = (Math.random() - 0.5) * 30;
+          p.vy = 40 + Math.random() * 40;
+        }
+      }
+    }
   }
 
   private gameLoop(time: number): void {
@@ -988,6 +1147,23 @@ export class Game {
 
     // Update line glow effects (expects seconds)
     this.lineGlowManager.update(deltaTime);
+
+    // Update combo heart pulse phase (base 2Hz, speed scales with combo tier)
+    const comboStreak = this.scoreManager.getComboStreak();
+    if (comboStreak >= 1) {
+      const tier = Math.min(9, Math.floor((comboStreak - 1) / 3));
+      const speedMultipliers = [0.26, 0.31, 0.36, 0.42, 0.47, 0.52, 0.57, 0.62, 0.68, 0.78];
+      const baseFrequency = 2 * Math.PI * 2;  // 2Hz base = 2 pulses per second
+      this.heartPulsePhase += deltaTime * baseFrequency * speedMultipliers[tier];
+      if (this.heartPulsePhase > Math.PI * 2) {
+        this.heartPulsePhase -= Math.PI * 2;
+      }
+    }
+
+    // Update confetti on game over screen
+    if (this.state === 'gameover_screen') {
+      this.updateConfetti(deltaTime);
+    }
   }
 
   private render(): void {
@@ -1063,9 +1239,10 @@ export class Game {
       highlightedCells: this.dragDropManager.getHighlightedCells(),
       highlightedPositions: this.dragDropManager.getHighlightedPositionsSet(),
       animatingCells: this.animatingCells,
-      score: this.scoreManager.getScore(),
+      score: this.displayedScore,
       highScore: this.scoreManager.getHighScore(),
       comboStreak: this.scoreManager.getComboStreak(),
+      heartPulsePhase: this.heartPulsePhase,
     };
 
     this.renderer.render(state);

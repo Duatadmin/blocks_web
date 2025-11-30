@@ -38,6 +38,7 @@ export interface RenderState {
   score: number;
   highScore: number;
   comboStreak: number;
+  heartPulsePhase: number;  // 0 to 2π for pulsing animation
 }
 
 export interface DragState {
@@ -81,6 +82,12 @@ export class Renderer {
   private starburstSize: number = 0;
   // Header image for home screen
   private headerImage: HTMLImageElement | null = null;
+  // Crown image for high score badge
+  private crownImage: HTMLImageElement | null = null;
+  // Heart image for combo indicator
+  private heartImage: HTMLImageElement | null = null;
+  // Offscreen canvas for heart tinting
+  private heartTintCanvas: OffscreenCanvas | null = null;
 
   constructor(ctx: CanvasRenderingContext2D, dpr: number = 1) {
     this.ctx = ctx;
@@ -121,7 +128,33 @@ export class Renderer {
         resolve();
       };
       img.onerror = reject;
-      img.src = '/assets/png/Block_Rush_Header.png';
+      img.src = '/assets/png/alpha_v1.png';
+    });
+  }
+
+  // Load crown image for high score badge
+  public loadCrownImage(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        this.crownImage = img;
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = '/assets/png/crown.png';
+    });
+  }
+
+  // Load heart image for combo indicator
+  public loadHeartImage(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        this.heartImage = img;
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = '/assets/png/Heart.png';
     });
   }
 
@@ -246,7 +279,7 @@ export class Renderer {
     // Draw cached background (gradient + container + grid lines) - single drawImage
     this.clear();
     // renderGridContainer() and renderGrid() are now part of cached background
-    this.renderScore(state.score, state.highScore);
+    this.renderScore(state.score, state.highScore, state.comboStreak, state.heartPulsePhase);
     this.renderHighlights(state.highlightedCells, state.highlightedPositions);
     this.renderGridBlocks(state.grid, state.highlightedPositions, state.animatingCells);
     this.renderDropArea(state.dropBlocks, state.dragState);
@@ -301,103 +334,148 @@ export class Renderer {
     ctx.stroke();
   }
 
-  // Render score display - split layout
-  private renderScore(score: number, highScore: number): void {
+  // Render score display - new layout matching target design
+  private renderScore(score: number, highScore: number, comboStreak: number, heartPulsePhase: number): void {
     const ctx = this.ctx;
-    const leftX = 50;
-    const rightX = VIEWPORT_WIDTH - 50;
-    const scoreY = 80;
-    const labelY = 35;
+    const crownSize = 22;
+    const gap = 8;
 
-    // === LEFT SIDE: Current Score ===
+    // === TOP-LEFT: High Score with Crown ===
     ctx.save();
-    // Text shadow
     ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
     ctx.shadowBlur = 4;
     ctx.shadowOffsetX = 2;
     ctx.shadowOffsetY = 2;
 
-    // "SCORE" label
+    const highScoreX = 30;
+    const highScoreY = 45;
+
+    // Draw crown icon
+    this.renderCrown(highScoreX, highScoreY - crownSize / 2, crownSize);
+
+    // High score value (after crown)
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = COLORS.TextSecondary;
-    ctx.font = '14px Inter, sans-serif';
-    ctx.fillText('SCORE', leftX, labelY);
-
-    // Score value
-    ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = 'bold 48px Inter, sans-serif';
-    ctx.fillText(score.toLocaleString(), leftX, scoreY);
+    ctx.fillStyle = COLORS.Gold;
+    ctx.font = 'bold 28px Montserrat, Inter, sans-serif';
+    ctx.fillText(highScore.toLocaleString(), highScoreX + crownSize + gap, highScoreY);
     ctx.restore();
 
-    // === RIGHT SIDE: High Score with Crown ===
+    // === COMBO HEART (behind score) ===
+    this.renderComboHeart(comboStreak, heartPulsePhase);
+
+    // === CENTER: Current Score (large) ===
     ctx.save();
     ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
     ctx.shadowBlur = 4;
     ctx.shadowOffsetX = 2;
     ctx.shadowOffsetY = 2;
 
-    // "BEST" label (right aligned)
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = COLORS.Gold;
-    ctx.font = '14px Inter, sans-serif';
-    ctx.fillText('BEST', rightX, labelY);
-
-    // High score value
-    ctx.fillStyle = COLORS.Gold;
-    ctx.font = 'bold 32px Inter, sans-serif';
-    ctx.fillText(highScore.toLocaleString(), rightX, scoreY);
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = 'bold 56px Montserrat, Inter, sans-serif';
+    ctx.fillText(score.toLocaleString(), VIEWPORT_WIDTH / 2, 100);
     ctx.restore();
   }
 
-  // Render a crown icon using canvas paths
+  // Render a crown icon using PNG image
   private renderCrown(x: number, y: number, size: number): void {
+    if (this.crownImage) {
+      // Draw the crown image scaled to the requested size
+      this.ctx.drawImage(this.crownImage, x, y, size, size);
+    }
+  }
+
+  // Combo heart color tiers (10 tiers, changes every 3 combos)
+  private static readonly HEART_COLORS = [
+    '#FF69B4',  // Tier 0 (combo 1-3):   Pink
+    '#FF1493',  // Tier 1 (combo 4-6):   Hot pink
+    '#FF0000',  // Tier 2 (combo 7-9):   Red
+    '#FF4500',  // Tier 3 (combo 10-12): Orange-red
+    '#FF8C00',  // Tier 4 (combo 13-15): Orange
+    '#FFD700',  // Tier 5 (combo 16-18): Gold
+    '#FFFF00',  // Tier 6 (combo 19-21): Yellow
+    '#ADFF2F',  // Tier 7 (combo 22-24): Lime
+    '#FFFFFF',  // Tier 8 (combo 25-27): White/Glow
+    '#FFFFFF',  // Tier 9 (combo 28+):   White/Glow
+  ];
+
+  // Pulse speed multipliers per tier (30% faster than previous)
+  private static readonly HEART_PULSE_SPEEDS = [
+    0.26, 0.31, 0.36, 0.42, 0.47, 0.52, 0.57, 0.62, 0.68, 0.78
+  ];
+
+  // Render combo heart with color tinting behind the score
+  private renderComboHeart(comboStreak: number, pulsePhase: number): void {
+    if (!this.heartImage || comboStreak < 1) return;
+
     const ctx = this.ctx;
+    const heartSize = 96;  // 20% bigger than original 80
+    const centerX = VIEWPORT_WIDTH / 2;
+    const centerY = 100;  // Same Y as score
+
+    // Calculate tier (0-9) based on combo streak
+    const tier = Math.min(9, Math.floor((comboStreak - 1) / 3));
+    const tintColor = Renderer.HEART_COLORS[tier];
+
+    // Calculate pulse scale (0.92 to 1.15) - min is 20% smaller than max
+    const pulseScale = 1.035 + Math.sin(pulsePhase) * 0.115;
+    const scaledSize = heartSize * pulseScale;
+
+    // Position centered
+    const x = centerX - scaledSize / 2;
+    const y = centerY - scaledSize / 2;
+
     ctx.save();
-    ctx.translate(x, y);
 
-    // Crown shape (5-point crown)
-    ctx.beginPath();
-    // Base of crown
-    ctx.moveTo(0, size);
-    ctx.lineTo(size, size);
-    // Right point
-    ctx.lineTo(size, size * 0.4);
-    ctx.lineTo(size * 0.8, size * 0.6);
-    // Center right point
-    ctx.lineTo(size * 0.65, size * 0.2);
-    ctx.lineTo(size * 0.5, size * 0.5);
-    // Center point (top)
-    ctx.lineTo(size * 0.5, 0);
-    ctx.lineTo(size * 0.5, size * 0.5);
-    // Center left point
-    ctx.lineTo(size * 0.35, size * 0.2);
-    ctx.lineTo(size * 0.2, size * 0.6);
-    // Left point
-    ctx.lineTo(0, size * 0.4);
-    ctx.closePath();
+    // Create or reuse offscreen canvas for tinting (fixed size to avoid flicker)
+    const maxScaledSize = heartSize * 1.15;  // Max pulse scale
+    if (!this.heartTintCanvas ||
+        this.heartTintCanvas.width !== Math.ceil(maxScaledSize * this.dpr) ||
+        this.heartTintCanvas.height !== Math.ceil(maxScaledSize * this.dpr)) {
+      this.heartTintCanvas = new OffscreenCanvas(
+        Math.ceil(maxScaledSize * this.dpr),
+        Math.ceil(maxScaledSize * this.dpr)
+      );
+    }
 
-    // Fill with gold
-    ctx.fillStyle = COLORS.Gold;
-    ctx.fill();
+    const offCtx = this.heartTintCanvas.getContext('2d')!;
+    offCtx.clearRect(0, 0, this.heartTintCanvas.width, this.heartTintCanvas.height);
+    offCtx.scale(this.dpr, this.dpr);
 
-    // Add gems (small circles)
-    ctx.fillStyle = '#FF6B6B'; // Ruby red
-    ctx.beginPath();
-    ctx.arc(size * 0.5, size * 0.65, size * 0.08, 0, Math.PI * 2);
-    ctx.fill();
+    // Draw heart at full opacity
+    offCtx.drawImage(this.heartImage, 0, 0, scaledSize, scaledSize);
 
-    ctx.fillStyle = '#4ECDC4'; // Teal
-    ctx.beginPath();
-    ctx.arc(size * 0.25, size * 0.7, size * 0.06, 0, Math.PI * 2);
-    ctx.fill();
+    // Apply color tint using multiply blend mode
+    offCtx.globalCompositeOperation = 'multiply';
+    offCtx.fillStyle = tintColor;
+    offCtx.fillRect(0, 0, scaledSize, scaledSize);
 
-    ctx.beginPath();
-    ctx.arc(size * 0.75, size * 0.7, size * 0.06, 0, Math.PI * 2);
-    ctx.fill();
+    // Restore alpha from original image
+    offCtx.globalCompositeOperation = 'destination-in';
+    offCtx.drawImage(this.heartImage, 0, 0, scaledSize, scaledSize);
+
+    // Reset scale for next use
+    offCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Draw the tinted heart to main canvas with slight transparency
+    ctx.globalAlpha = 0.7;
+    ctx.drawImage(
+      this.heartTintCanvas,
+      0, 0, scaledSize * this.dpr, scaledSize * this.dpr,  // Source: only the heart portion
+      x, y, scaledSize, scaledSize
+    );
+    ctx.globalAlpha = 1;
 
     ctx.restore();
+  }
+
+  // Get pulse speed multiplier for a combo streak
+  public static getHeartPulseSpeed(comboStreak: number): number {
+    if (comboStreak < 1) return 1.0;
+    const tier = Math.min(9, Math.floor((comboStreak - 1) / 3));
+    return Renderer.HEART_PULSE_SPEEDS[tier];
   }
 
   // Render the grid background
@@ -1032,28 +1110,30 @@ export class Renderer {
     const ctx = this.ctx;
     this.clearGradientOnly();  // Use gradient only - no gameplay grid
 
+    // Fixed layout positions (image has empty space, so don't calculate from dimensions)
+    const badgeHeight = HOME_SCREEN.BADGE_PADDING_Y * 2 + 24;  // ~44px
+    const badgeY = 370;  // Fixed position above grid (grid at 430)
+
     // Title header image
     if (this.headerImage) {
-      const imgWidth = 400;  // Scale to fit viewport (540px wide)
+      const imgWidth = 600;  // Header image width
       const imgHeight = (this.headerImage.height / this.headerImage.width) * imgWidth;
       const imgX = (VIEWPORT_WIDTH - imgWidth) / 2;
-      const imgY = 80;
+      const imgY = 0;  // Fixed position from top
       ctx.drawImage(this.headerImage, imgX, imgY, imgWidth, imgHeight);
     }
 
     // High score badge
     if (highScore > 0) {
       ctx.save();
-      ctx.font = `bold 22px Inter, sans-serif`;
+      ctx.font = `bold 22px Montserrat, Inter, sans-serif`;
       const scoreText = highScore.toLocaleString();
       const textWidth = ctx.measureText(scoreText).width;
       const crownSize = 22;
       const gap = 8;
 
       const badgeWidth = HOME_SCREEN.BADGE_PADDING_X * 2 + crownSize + gap + textWidth;
-      const badgeHeight = HOME_SCREEN.BADGE_PADDING_Y * 2 + 24;
       const badgeX = (VIEWPORT_WIDTH - badgeWidth) / 2;
-      const badgeY = 275;
 
       // Badge background
       ctx.fillStyle = HOME_SCREEN.BADGE_BG;
@@ -1107,7 +1187,7 @@ export class Renderer {
     ctx.stroke();
 
     // Button text "START"
-    ctx.font = `bold ${HOME_SCREEN.BUTTON_FONT_SIZE}px Inter, sans-serif`;
+    ctx.font = `bold ${HOME_SCREEN.BUTTON_FONT_SIZE}px Montserrat, Inter, sans-serif`;
     ctx.fillStyle = HOME_SCREEN.BUTTON_TEXT_COLOR;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1124,7 +1204,7 @@ export class Renderer {
     const containerWidth = previewSize * previewCellSize + containerPadding * 2;
     const containerHeight = previewSize * previewCellSize + containerPadding * 2;
     const containerX = (VIEWPORT_WIDTH - containerWidth) / 2;
-    const containerY = 390;
+    const containerY = 430;
 
     // Container shadow
     ctx.save();
@@ -1261,7 +1341,7 @@ export class Renderer {
     ctx.shadowOffsetY = 2;
 
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = 'bold 44px Inter, sans-serif';
+    ctx.font = 'bold 44px Montserrat, Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('GAME OVER', VIEWPORT_WIDTH / 2, modalY + 65);
@@ -1273,7 +1353,7 @@ export class Renderer {
     ctx.shadowBlur = 4;
     ctx.shadowOffsetY = 2;
 
-    ctx.font = 'bold 60px Inter, sans-serif';
+    ctx.font = 'bold 60px Montserrat, Inter, sans-serif';
     ctx.fillStyle = isNewHighScore ? COLORS.Gold : COLORS.TextPrimary;
     ctx.fillText(score.toLocaleString(), VIEWPORT_WIDTH / 2, modalY + 150);
     ctx.restore();
@@ -1283,7 +1363,7 @@ export class Renderer {
       const crownSize = 24;
       const gap = 10;
       const highScoreText = 'NEW HIGH SCORE!';
-      ctx.font = 'bold 22px Inter, sans-serif';
+      ctx.font = 'bold 22px Montserrat, Inter, sans-serif';
       const textWidth = ctx.measureText(highScoreText).width;
       const totalWidth = crownSize + gap + textWidth;
       const startX = VIEWPORT_WIDTH / 2 - totalWidth / 2;
@@ -1301,7 +1381,7 @@ export class Renderer {
       const crownSize = 20;
       const gap = 8;
       const bestText = `Best: ${highScore.toLocaleString()}`;
-      ctx.font = '20px Inter, sans-serif';
+      ctx.font = '20px Montserrat, Inter, sans-serif';
       const textWidth = ctx.measureText(bestText).width;
       const totalWidth = crownSize + gap + textWidth;
       const startX = VIEWPORT_WIDTH / 2 - totalWidth / 2;
@@ -1346,7 +1426,7 @@ export class Renderer {
     ctx.shadowBlur = 2;
     ctx.shadowOffsetY = 1;
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = 'bold 24px Inter, sans-serif';
+    ctx.font = 'bold 24px Montserrat, Inter, sans-serif';
     ctx.fillText('PLAY AGAIN', VIEWPORT_WIDTH / 2, buttonY + buttonHeight / 2);
     ctx.restore();
   }
@@ -1381,7 +1461,7 @@ export class Renderer {
 
     // Text
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = `bold ${OVERLAY_FONT_SIZE}px Inter, sans-serif`;
+    ctx.font = `bold ${OVERLAY_FONT_SIZE}px Montserrat, Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('No more space', VIEWPORT_WIDTH / 2, bgY + OVERLAY_BG_HEIGHT / 2);
@@ -1428,14 +1508,14 @@ export class Renderer {
 
     // Title "Continue?"
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = `bold ${MODAL_TITLE_FONT_SIZE}px Inter, sans-serif`;
+    ctx.font = `bold ${MODAL_TITLE_FONT_SIZE}px Montserrat, Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('Continue?', VIEWPORT_WIDTH / 2, modalY + 50);
 
     // Subtitle
     ctx.fillStyle = COLORS.TextSecondary;
-    ctx.font = '16px Inter, sans-serif';
+    ctx.font = '16px Montserrat, Inter, sans-serif';
     ctx.fillText('Watch an ad to get new blocks:', VIEWPORT_WIDTH / 2, modalY + 90);
 
     // Block preview
@@ -1454,7 +1534,7 @@ export class Renderer {
 
     // "No, thanks" text button
     ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.font = '18px Inter, sans-serif';
+    ctx.font = '18px Montserrat, Inter, sans-serif';
     ctx.fillText('No, thanks', VIEWPORT_WIDTH / 2, modalY + MODAL_HEIGHT - 40);
 
     ctx.restore();
@@ -1524,7 +1604,7 @@ export class Renderer {
     ctx.shadowBlur = 2;
     ctx.shadowOffsetY = 1;
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = 'bold 22px Inter, sans-serif';
+    ctx.font = 'bold 22px Montserrat, Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, x + width / 2, y + height / 2);
@@ -1544,13 +1624,13 @@ export class Renderer {
 
     // "Watching ad..." text
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = 'bold 32px Inter, sans-serif';
+    ctx.font = 'bold 32px Montserrat, Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('Watching ad...', VIEWPORT_WIDTH / 2, VIEWPORT_HEIGHT / 2);
 
     // Placeholder note
-    ctx.font = '18px Inter, sans-serif';
+    ctx.font = '18px Montserrat, Inter, sans-serif';
     ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.fillText('(This is a placeholder)', VIEWPORT_WIDTH / 2, VIEWPORT_HEIGHT / 2 + 50);
 
@@ -1568,30 +1648,57 @@ export class Renderer {
     showNewHighScoreBadge: boolean;
     badgeScale: number;
     badgeOpacity: number;
+    confetti?: Array<{ x: number; y: number; color: string; size: number; rotation: number }>;
+    burstConfetti?: Array<{ x: number; y: number; color: string; size: number; rotation: number }>;
   }): void {
     const ctx = this.ctx;
     const {
-      SCREEN_TITLE_Y,
       SCREEN_TITLE_FONT_SIZE,
       SCREEN_SCORE_Y,
       SCREEN_SCORE_FONT_SIZE,
       SCREEN_BEST_Y,
       SCREEN_BADGE_Y,
       SCREEN_PLAY_BUTTON_Y,
-      SCREEN_HOME_BUTTON_Y,
       BUTTON_WIDTH,
       BUTTON_HEIGHT,
     } = GAME_OVER_LAYOUT;
 
-    // Darken background
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    // Blue gradient background (like reference)
+    const gradient = ctx.createLinearGradient(0, 0, 0, VIEWPORT_HEIGHT);
+    gradient.addColorStop(0, '#4A90C2');  // Lighter blue at top
+    gradient.addColorStop(1, '#2B5278');  // Darker blue at bottom
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
 
-    // "GAME OVER" title with animation
+    // Render burst confetti particles (behind everything)
+    if (state.burstConfetti) {
+      for (const particle of state.burstConfetti) {
+        ctx.save();
+        ctx.translate(particle.x, particle.y);
+        ctx.rotate(particle.rotation);
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+        ctx.restore();
+      }
+    }
+
+    // Render falling confetti particles (behind everything)
+    if (state.confetti) {
+      for (const particle of state.confetti) {
+        ctx.save();
+        ctx.translate(particle.x, particle.y);
+        ctx.rotate(particle.rotation);
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+        ctx.restore();
+      }
+    }
+
+    // "Game Over" title with animation (italic)
     ctx.save();
     ctx.globalAlpha = state.titleOpacity;
     ctx.fillStyle = COLORS.TextPrimary;
-    ctx.font = `bold ${SCREEN_TITLE_FONT_SIZE}px Inter, sans-serif`;
+    ctx.font = `italic bold ${SCREEN_TITLE_FONT_SIZE}px Montserrat, Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -1599,13 +1706,22 @@ export class Renderer {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowBlur = 6;
     ctx.shadowOffsetY = 3;
-    ctx.fillText('GAME OVER', VIEWPORT_WIDTH / 2, state.titleY);
+    ctx.fillText('Game Over', VIEWPORT_WIDTH / 2, state.titleY);
     ctx.restore();
 
-    // Score with count-up
+    // "Score" label
     ctx.save();
-    ctx.fillStyle = state.isNewHighScore ? COLORS.Gold : COLORS.TextPrimary;
-    ctx.font = `bold ${SCREEN_SCORE_FONT_SIZE}px Inter, sans-serif`;
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = 'bold 24px Montserrat, Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Score', VIEWPORT_WIDTH / 2, SCREEN_SCORE_Y - 60);
+    ctx.restore();
+
+    // Score number with count-up
+    ctx.save();
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = `bold ${SCREEN_SCORE_FONT_SIZE}px Montserrat, Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
@@ -1614,12 +1730,23 @@ export class Renderer {
     ctx.fillText(state.displayedScore.toLocaleString(), VIEWPORT_WIDTH / 2, SCREEN_SCORE_Y);
     ctx.restore();
 
-    // Best score
-    ctx.fillStyle = COLORS.TextSecondary;
-    ctx.font = '24px Inter, sans-serif';
+    // "Best Score" label
+    ctx.save();
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.font = 'bold 24px Montserrat, Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`Best: ${state.bestScore.toLocaleString()}`, VIEWPORT_WIDTH / 2, SCREEN_BEST_Y);
+    ctx.fillText('Best Score', VIEWPORT_WIDTH / 2, SCREEN_BEST_Y);
+    ctx.restore();
+
+    // Best score number (gold)
+    ctx.save();
+    ctx.fillStyle = COLORS.Gold;
+    ctx.font = 'bold 48px Montserrat, Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(state.bestScore.toLocaleString(), VIEWPORT_WIDTH / 2, SCREEN_BEST_Y + 45);
+    ctx.restore();
 
     // New high score badge
     if (state.showNewHighScoreBadge && state.isNewHighScore) {
@@ -1637,7 +1764,7 @@ export class Renderer {
 
       // Badge text
       ctx.fillStyle = '#1a2744';
-      ctx.font = 'bold 18px Inter, sans-serif';
+      ctx.font = 'bold 18px Montserrat, Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('NEW HIGH SCORE!', 0, 0);
@@ -1645,25 +1772,44 @@ export class Renderer {
       ctx.restore();
     }
 
-    // Play Again button
-    this.renderButton(
+    // Play button with play icon (like reference)
+    this.renderPlayButton(
       (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
       SCREEN_PLAY_BUTTON_Y,
       BUTTON_WIDTH,
-      BUTTON_HEIGHT,
-      'PLAY AGAIN',
-      COLORS.Green
+      BUTTON_HEIGHT
     );
+  }
 
-    // Home button (darker/gray)
-    this.renderButton(
-      (VIEWPORT_WIDTH - BUTTON_WIDTH) / 2,
-      SCREEN_HOME_BUTTON_Y,
-      BUTTON_WIDTH,
-      BUTTON_HEIGHT,
-      'HOME',
-      '#555555'
-    );
+  // Render play button with play icon (for game over screen)
+  private renderPlayButton(x: number, y: number, width: number, height: number): void {
+    const ctx = this.ctx;
+    const radius = 8;
+
+    ctx.save();
+
+    // Button background (green with gradient)
+    const btnGradient = ctx.createLinearGradient(x, y, x, y + height);
+    btnGradient.addColorStop(0, '#5CBF60');
+    btnGradient.addColorStop(1, '#3DA441');
+    ctx.fillStyle = btnGradient;
+    this.roundRect(x, y, width, height, radius);
+    ctx.fill();
+
+    // Play icon (triangle)
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const iconSize = 18;
+
+    ctx.fillStyle = COLORS.TextPrimary;
+    ctx.beginPath();
+    ctx.moveTo(centerX - iconSize / 2.5, centerY - iconSize / 2);
+    ctx.lineTo(centerX - iconSize / 2.5, centerY + iconSize / 2);
+    ctx.lineTo(centerX + iconSize / 2, centerY);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
   }
 
   // Get continue button bounds (for continue modal)
