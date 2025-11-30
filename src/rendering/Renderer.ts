@@ -1,32 +1,6 @@
 // Main Renderer - Handles all canvas rendering operations
 
-// ============================================================================
-// Canvas Filter Support Detection
-// Safari has ctx.filter property but silently ignores it - need runtime test
-// ============================================================================
-
-let _supportsFilter: boolean | null = null;
-
-function supportsCanvasFilter(): boolean {
-  if (_supportsFilter !== null) return _supportsFilter;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = 4;
-  canvas.height = 4;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return (_supportsFilter = false);
-
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, 1, 1);
-  ctx.filter = 'blur(1px)';
-  ctx.fillRect(0, 0, 1, 1);
-
-  const imageData = ctx.getImageData(1, 0, 1, 1);
-  const hasBlur = imageData.data[3] > 0;
-
-  return (_supportsFilter = hasBlur);
-}
-
+import { imageDataRGBA } from 'stackblur-canvas';
 import {
   VIEWPORT_WIDTH,
   VIEWPORT_HEIGHT,
@@ -102,6 +76,11 @@ export class Renderer {
   private gradientCache: OffscreenCanvas | null = null;
   // Cached full background (gradient + container + grid lines) - rendered once
   private backgroundCache: OffscreenCanvas | null = null;
+  // Cached starburst with blur (for combo notification) - rendered once
+  private starburstCache: OffscreenCanvas | null = null;
+  private starburstSize: number = 0;
+  // Header image for home screen
+  private headerImage: HTMLImageElement | null = null;
 
   constructor(ctx: CanvasRenderingContext2D, dpr: number = 1) {
     this.ctx = ctx;
@@ -131,6 +110,19 @@ export class Renderer {
 
   public getDropAreaY(): number {
     return this.dropAreaY;
+  }
+
+  // Load header image for home screen
+  public loadHeaderImage(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        this.headerImage = img;
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = '/assets/png/Block_Rush_Header.png';
+    });
   }
 
   // Initialize gradient-only cache (for home screen, game over)
@@ -809,51 +801,50 @@ export class Renderer {
     });
   }
 
-  // Draw starburst rays effect - enhanced dual-layer glow with varied rays
-  private drawStarburst(x: number, y: number, pulseScale: number, opacity: number = 1, rotation: number = 0): void {
-    const ctx = this.ctx;
+  /**
+   * Pre-render starburst to OffscreenCanvas with StackBlur applied.
+   * Cached for performance - blur is applied once, not every frame.
+   */
+  private initializeStarburstCache(): void {
+    if (this.starburstCache) return;
+
     const rays = COMBO_NOTIFICATION.STARBURST_RAYS;
+    const coreRadius = COMBO_NOTIFICATION.STARBURST_CORE_RADIUS;
+    const haloRadius = COMBO_NOTIFICATION.STARBURST_HALO_RADIUS;
+    const outerRadius = COMBO_NOTIFICATION.STARBURST_OUTER_RADIUS;
+    const innerRadius = COMBO_NOTIFICATION.STARBURST_INNER_RADIUS;
 
-    // Scale radii with pulse
-    const coreRadius = COMBO_NOTIFICATION.STARBURST_CORE_RADIUS * pulseScale;
-    const haloRadius = COMBO_NOTIFICATION.STARBURST_HALO_RADIUS * pulseScale;
-    const outerRadius = COMBO_NOTIFICATION.STARBURST_OUTER_RADIUS * pulseScale;
-    const innerRadius = COMBO_NOTIFICATION.STARBURST_INNER_RADIUS * pulseScale;
+    // Canvas size with padding for blur spread
+    const blurPadding = 20;
+    const maxRadius = Math.max(haloRadius, outerRadius * 1.35); // Account for hero rays
+    const size = (maxRadius + blurPadding) * 2;
+    this.starburstSize = size;
 
-    // Offset glow center downward for "light from below" effect
-    const offsetY = COMBO_NOTIFICATION.STARBURST_GLOW_OFFSET_Y;
-    const glowY = y + offsetY;
+    const physicalSize = Math.ceil(size * this.dpr);
+    const canvas = new OffscreenCanvas(physicalSize, physicalSize);
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(this.dpr, this.dpr);
 
-    ctx.save();
-    ctx.translate(x, glowY);
+    // Center point
+    const cx = size / 2;
+    const cy = size / 2;
 
-    // Apply blur filter on supported browsers for extra softness
-    if (supportsCanvasFilter()) {
-      ctx.filter = 'blur(6px)';
-    }
+    ctx.translate(cx, cy);
 
     // Use additive blending for all glow layers
     ctx.globalCompositeOperation = 'lighter';
 
-    // ========================================
-    // LAYER 1: Outer golden halo (largest, softest)
-    // ========================================
+    // LAYER 1: Outer golden halo
     const haloGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, haloRadius);
-    haloGradient.addColorStop(0, `rgba(255, 220, 100, ${COMBO_NOTIFICATION.STARBURST_HALO_OPACITY * opacity})`);
-    haloGradient.addColorStop(0.4, `rgba(255, 220, 100, ${COMBO_NOTIFICATION.STARBURST_HALO_OPACITY * 0.4 * opacity})`);
+    haloGradient.addColorStop(0, `rgba(255, 220, 100, ${COMBO_NOTIFICATION.STARBURST_HALO_OPACITY})`);
+    haloGradient.addColorStop(0.4, `rgba(255, 220, 100, ${COMBO_NOTIFICATION.STARBURST_HALO_OPACITY * 0.4})`);
     haloGradient.addColorStop(1, 'rgba(255, 220, 100, 0)');
-
     ctx.fillStyle = haloGradient;
     ctx.beginPath();
     ctx.arc(0, 0, haloRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    // ========================================
-    // LAYER 2: Soft rays with variation
-    // ========================================
-    ctx.rotate(rotation);
-
-    // Seeded random for consistent ray variation
+    // LAYER 2: Rays with variation (no rotation - will be applied at draw time)
     const seed = 42;
     let randomState = seed;
     const seededRandom = (): number => {
@@ -861,7 +852,6 @@ export class Renderer {
       return randomState / 0x7fffffff;
     };
 
-    // Determine hero ray indices (2-4 longer/brighter rays)
     const heroCount = COMBO_NOTIFICATION.STARBURST_HERO_RAYS;
     const heroIndices = new Set<number>();
     for (let i = 0; i < heroCount; i++) {
@@ -872,40 +862,32 @@ export class Renderer {
     const opacityVar = COMBO_NOTIFICATION.STARBURST_RAY_OPACITY_VAR;
     const baseRayOpacity = COMBO_NOTIFICATION.STARBURST_RAY_OPACITY;
 
-    // Draw rays (rays * 2 total, alternating)
     for (let i = 0; i < rays * 2; i++) {
       const isHero = heroIndices.has(i);
       const isLong = i % 2 === 0;
 
-      // Base angle with slight randomness
       const baseAngle = (i * Math.PI) / rays;
       const angleOffset = (seededRandom() - 0.5) * 0.15;
       const angle = baseAngle + angleOffset;
 
-      // Ray length with variation
       const baseLengthMult = isLong ? 1.0 : 0.55;
       const lengthMult = baseLengthMult + (seededRandom() - 0.5) * 2 * lengthVar;
       const rayLength = outerRadius * (isHero ? lengthMult * 1.35 : lengthMult);
 
-      // Ray opacity with variation
       let rayOpacity = baseRayOpacity + (seededRandom() - 0.5) * 2 * opacityVar;
       rayOpacity = isHero ? Math.min(rayOpacity * 1.4, 0.85) : rayOpacity;
-      rayOpacity = Math.max(0.2, Math.min(0.85, rayOpacity)); // Clamp
+      rayOpacity = Math.max(0.2, Math.min(0.85, rayOpacity));
 
-      // Ray width (wider for hero rays, softer look)
       const rayWidth = isLong ? 0.18 : 0.10;
       const finalWidth = isHero ? rayWidth * 1.3 : rayWidth;
 
-      // Create gradient from center to tip (golden rays, fades out for soft tips)
       const gradient = ctx.createRadialGradient(0, 0, innerRadius, 0, 0, rayLength);
-      gradient.addColorStop(0, `rgba(255, 235, 150, ${rayOpacity * opacity})`);
-      gradient.addColorStop(0.4, `rgba(255, 235, 150, ${rayOpacity * 0.5 * opacity})`);
-      gradient.addColorStop(0.7, `rgba(255, 235, 150, ${rayOpacity * 0.15 * opacity})`);
+      gradient.addColorStop(0, `rgba(255, 235, 150, ${rayOpacity})`);
+      gradient.addColorStop(0.4, `rgba(255, 235, 150, ${rayOpacity * 0.5})`);
+      gradient.addColorStop(0.7, `rgba(255, 235, 150, ${rayOpacity * 0.15})`);
       gradient.addColorStop(1, 'rgba(255, 235, 150, 0)');
 
       ctx.fillStyle = gradient;
-
-      // Draw ray as triangle (thicker, softer appearance)
       ctx.beginPath();
       ctx.moveTo(
         Math.cos(angle - finalWidth) * innerRadius,
@@ -923,22 +905,57 @@ export class Renderer {
       ctx.fill();
     }
 
-    // Reset rotation for center glow
-    ctx.rotate(-rotation);
-
-    // ========================================
-    // LAYER 3: Bright core bloom (on top)
-    // ========================================
+    // LAYER 3: Bright core bloom
     const coreGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius);
-    coreGradient.addColorStop(0, `rgba(255, 255, 255, ${COMBO_NOTIFICATION.STARBURST_CORE_OPACITY * opacity})`);
-    coreGradient.addColorStop(0.35, `rgba(255, 255, 255, ${0.5 * opacity})`);
-    coreGradient.addColorStop(0.7, `rgba(255, 255, 255, ${0.15 * opacity})`);
+    coreGradient.addColorStop(0, `rgba(255, 255, 255, ${COMBO_NOTIFICATION.STARBURST_CORE_OPACITY})`);
+    coreGradient.addColorStop(0.35, `rgba(255, 255, 255, 0.5)`);
+    coreGradient.addColorStop(0.7, `rgba(255, 255, 255, 0.15)`);
     coreGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
     ctx.fillStyle = coreGradient;
     ctx.beginPath();
     ctx.arc(0, 0, coreRadius, 0, Math.PI * 2);
     ctx.fill();
+
+    // Apply StackBlur for soft dreamy effect (works on all browsers including Safari!)
+    const blurRadius = Math.round(6 * this.dpr);
+    const imageData = ctx.getImageData(0, 0, physicalSize, physicalSize);
+    imageDataRGBA(imageData, 0, 0, physicalSize, physicalSize, blurRadius);
+    ctx.putImageData(imageData, 0, 0);
+
+    this.starburstCache = canvas;
+  }
+
+  // Draw starburst from cached texture with transforms
+  private drawStarburst(x: number, y: number, pulseScale: number, opacity: number = 1, rotation: number = 0): void {
+    // Initialize cache on first use
+    if (!this.starburstCache) {
+      this.initializeStarburstCache();
+    }
+
+    const ctx = this.ctx;
+    const offsetY = COMBO_NOTIFICATION.STARBURST_GLOW_OFFSET_Y;
+    const glowY = y + offsetY;
+    const size = this.starburstSize;
+
+    ctx.save();
+
+    // Position at glow center
+    ctx.translate(x, glowY);
+    // Apply rotation
+    ctx.rotate(rotation);
+    // Apply pulse scale
+    ctx.scale(pulseScale, pulseScale);
+    // Apply opacity
+    ctx.globalAlpha = opacity;
+    // Use additive blending for glow effect
+    ctx.globalCompositeOperation = 'lighter';
+
+    // Draw cached starburst centered at origin
+    ctx.drawImage(
+      this.starburstCache!,
+      -size / 2, -size / 2,
+      size, size
+    );
 
     ctx.restore();
   }
@@ -1015,30 +1032,14 @@ export class Renderer {
     const ctx = this.ctx;
     this.clearGradientOnly();  // Use gradient only - no gameplay grid
 
-    // Title "BLOCK PUZZLE" with 3-layer styled text
-    this.drawStyledText(
-      'BLOCK',
-      VIEWPORT_WIDTH / 2,
-      160,
-      HOME_SCREEN.TITLE_FONT_SIZE,
-      { top: HOME_SCREEN.TITLE_FILL_TOP, bottom: HOME_SCREEN.TITLE_FILL_BOTTOM },
-      HOME_SCREEN.TITLE_STROKE_COLOR,
-      HOME_SCREEN.TITLE_HIGHLIGHT_COLOR,
-      HOME_SCREEN.TITLE_STROKE_WIDTH,
-      'Inter, sans-serif'
-    );
-
-    this.drawStyledText(
-      'PUZZLE',
-      VIEWPORT_WIDTH / 2,
-      220,
-      HOME_SCREEN.TITLE_FONT_SIZE,
-      { top: HOME_SCREEN.TITLE_FILL_TOP, bottom: HOME_SCREEN.TITLE_FILL_BOTTOM },
-      HOME_SCREEN.TITLE_STROKE_COLOR,
-      HOME_SCREEN.TITLE_HIGHLIGHT_COLOR,
-      HOME_SCREEN.TITLE_STROKE_WIDTH,
-      'Inter, sans-serif'
-    );
+    // Title header image
+    if (this.headerImage) {
+      const imgWidth = 400;  // Scale to fit viewport (540px wide)
+      const imgHeight = (this.headerImage.height / this.headerImage.width) * imgWidth;
+      const imgX = (VIEWPORT_WIDTH - imgWidth) / 2;
+      const imgY = 80;
+      ctx.drawImage(this.headerImage, imgX, imgY, imgWidth, imgHeight);
+    }
 
     // High score badge
     if (highScore > 0) {

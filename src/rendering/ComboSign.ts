@@ -2,38 +2,7 @@
 // Renders "Combo X" with shadow blob, extrusion, outline, bevel fill, and gloss
 
 import { getComboFontFamily } from '../utils/fontLoader';
-
-// ============================================================================
-// Canvas Filter Support Detection
-// Safari has ctx.filter property but silently ignores it - need runtime test
-// ============================================================================
-
-let _supportsFilter: boolean | null = null;
-
-function supportsCanvasFilter(): boolean {
-  if (_supportsFilter !== null) return _supportsFilter;
-
-  // Create a small test canvas
-  const canvas = document.createElement('canvas');
-  canvas.width = 4;
-  canvas.height = 4;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return (_supportsFilter = false);
-
-  // Draw a black pixel at top-left
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, 1, 1);
-
-  // Apply blur and redraw - if filter works, blur will spread to adjacent pixels
-  ctx.filter = 'blur(1px)';
-  ctx.fillRect(0, 0, 1, 1);
-
-  // Check if blur spread to the pixel to the right
-  const imageData = ctx.getImageData(1, 0, 1, 1);
-  const hasBlur = imageData.data[3] > 0;  // If alpha > 0, blur worked
-
-  return (_supportsFilter = hasBlur);
-}
+import { imageDataRGBA } from 'stackblur-canvas';
 
 // ============================================================================
 // Public Types
@@ -373,7 +342,7 @@ export class ComboSignCache {
 
   /**
    * Layer 1: Soft shadow blob beneath text
-   * Uses ctx.filter blur on supported browsers (Chrome/Firefox), radial gradient fallback on Safari
+   * Uses StackBlur for consistent blur effect across all browsers (including Safari/iOS)
    */
   private renderShadowBlob(
     ctx: OffscreenCanvasRenderingContext2D,
@@ -385,59 +354,45 @@ export class ComboSignCache {
     font: string
   ): void {
     const offsetY = fontSize * SHADOW.OFFSET_Y;
+    const blurRadius = Math.round(fontSize * SHADOW.BLUR_RADIUS * this.dpr);
+    const strokeWidth = fontSize * SHADOW.STROKE_WIDTH;
 
-    if (supportsCanvasFilter()) {
-      // ORIGINAL - ctx.filter blur (works great on Chrome/Firefox)
-      const blurRadius = fontSize * SHADOW.BLUR_RADIUS;
-      const strokeWidth = fontSize * SHADOW.STROKE_WIDTH;
+    // Create temp canvas for shadow (will be blurred independently)
+    const canvas = ctx.canvas;
+    const tempCanvas = new OffscreenCanvas(canvas.width, canvas.height);
+    const tempCtx = tempCanvas.getContext('2d')!;
+    tempCtx.scale(this.dpr, this.dpr);
 
-      ctx.save();
-      ctx.filter = `blur(${blurRadius}px)`;
-      ctx.font = font;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+    // Draw shadow text to temp canvas
+    tempCtx.font = font;
+    tempCtx.textAlign = 'center';
+    tempCtx.textBaseline = 'middle';
 
-      // Draw thick stroke first (fills counters in letters like 4, 6, 8, 9, 0)
-      ctx.strokeStyle = shadowColor;
-      ctx.lineWidth = strokeWidth;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.strokeText(text, x, y + offsetY);
-
-      // Draw fill on top to define glyph shape
-      ctx.fillStyle = shadowColor;
-      ctx.fillText(text, x, y + offsetY);
-
-      ctx.restore();
-    } else {
-      // FALLBACK - radial gradient (for Safari/iOS)
-      ctx.font = font;
-      const metrics = ctx.measureText(text);
-      const textWidth = metrics.width;
-      const blobRadiusX = textWidth * 0.55;
-      const blobRadiusY = fontSize * 0.45;
-
-      ctx.save();
-
-      const maxRadius = Math.max(blobRadiusX, blobRadiusY);
-      const gradient = ctx.createRadialGradient(
-        x, y + offsetY, 0,
-        x, y + offsetY, maxRadius
-      );
-
-      gradient.addColorStop(0, shadowColor);
-      gradient.addColorStop(0.3, shadowColor);
-      gradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.4)');
-      gradient.addColorStop(0.85, 'rgba(0, 0, 0, 0.15)');
-      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.ellipse(x, y + offsetY, blobRadiusX, blobRadiusY, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
+    // Copy letter spacing from main context if set
+    if ((ctx as any).letterSpacing) {
+      (tempCtx as any).letterSpacing = (ctx as any).letterSpacing;
     }
+
+    // Draw thick stroke first (fills counters in letters like 4, 6, 8, 9, 0)
+    tempCtx.strokeStyle = shadowColor;
+    tempCtx.lineWidth = strokeWidth;
+    tempCtx.lineJoin = 'round';
+    tempCtx.lineCap = 'round';
+    tempCtx.strokeText(text, x, y + offsetY);
+
+    // Draw fill on top to define glyph shape
+    tempCtx.fillStyle = shadowColor;
+    tempCtx.fillText(text, x, y + offsetY);
+
+    // Apply StackBlur to the temp canvas (works on all browsers including Safari!)
+    if (blurRadius > 0) {
+      const imageData = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+      imageDataRGBA(imageData, 0, 0, canvas.width, canvas.height, blurRadius);
+      tempCtx.putImageData(imageData, 0, 0);
+    }
+
+    // Composite blurred shadow back to main canvas
+    ctx.drawImage(tempCanvas, 0, 0, canvas.width / this.dpr, canvas.height / this.dpr);
   }
 
   /**
