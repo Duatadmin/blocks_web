@@ -86,8 +86,9 @@ export class Renderer {
   private crownImage: HTMLImageElement | null = null;
   // Heart image for combo indicator
   private heartImage: HTMLImageElement | null = null;
-  // Offscreen canvas for heart tinting
-  private heartTintCanvas: OffscreenCanvas | null = null;
+  // Offscreen canvas for heart tinting (pre-allocated at max size)
+  private heartTintCanvas: OffscreenCanvas;
+  private heartTintCanvasSize: number;  // Cached size for reuse
 
   constructor(ctx: CanvasRenderingContext2D, dpr: number = 1) {
     this.ctx = ctx;
@@ -109,6 +110,11 @@ export class Renderer {
 
     // Drop area below grid container
     this.dropAreaY = this.containerY + this.containerHeight + 40;
+
+    // Pre-allocate heart tint canvas at fixed max size (avoids first-render allocation)
+    const maxHeartSize = 96 * 1.15;  // heartSize * maxPulseScale
+    this.heartTintCanvasSize = Math.ceil(maxHeartSize * this.dpr);
+    this.heartTintCanvas = new OffscreenCanvas(this.heartTintCanvasSize, this.heartTintCanvasSize);
   }
 
   public getGridOrigin(): Point {
@@ -429,34 +435,21 @@ export class Renderer {
 
     ctx.save();
 
-    // Create or reuse offscreen canvas for tinting (fixed size to avoid flicker)
-    const maxScaledSize = heartSize * 1.15;  // Max pulse scale
-    if (!this.heartTintCanvas ||
-        this.heartTintCanvas.width !== Math.ceil(maxScaledSize * this.dpr) ||
-        this.heartTintCanvas.height !== Math.ceil(maxScaledSize * this.dpr)) {
-      this.heartTintCanvas = new OffscreenCanvas(
-        Math.ceil(maxScaledSize * this.dpr),
-        Math.ceil(maxScaledSize * this.dpr)
-      );
-    }
-
+    // Use pre-allocated offscreen canvas (no size check, fixed at max size)
     const offCtx = this.heartTintCanvas.getContext('2d')!;
-    offCtx.clearRect(0, 0, this.heartTintCanvas.width, this.heartTintCanvas.height);
+    offCtx.clearRect(0, 0, this.heartTintCanvasSize, this.heartTintCanvasSize);
     offCtx.scale(this.dpr, this.dpr);
 
     // Draw heart at full opacity
     offCtx.drawImage(this.heartImage, 0, 0, scaledSize, scaledSize);
 
-    // Apply color tint using multiply blend mode
-    offCtx.globalCompositeOperation = 'multiply';
+    // Apply color tint using source-atop (single fill, no second drawImage needed)
+    offCtx.globalCompositeOperation = 'source-atop';
     offCtx.fillStyle = tintColor;
     offCtx.fillRect(0, 0, scaledSize, scaledSize);
 
-    // Restore alpha from original image
-    offCtx.globalCompositeOperation = 'destination-in';
-    offCtx.drawImage(this.heartImage, 0, 0, scaledSize, scaledSize);
-
-    // Reset scale for next use
+    // Reset for next use
+    offCtx.globalCompositeOperation = 'source-over';
     offCtx.setTransform(1, 0, 0, 1, 0, 0);
 
     // Draw the tinted heart to main canvas with slight transparency
@@ -1004,8 +997,15 @@ export class Renderer {
   }
 
   // Draw starburst from cached texture with transforms
+  /**
+   * Pre-initialize starburst cache during game init (avoids first-combo spike)
+   */
+  public prewarmStarburstCache(): void {
+    this.initializeStarburstCache();
+  }
+
   private drawStarburst(x: number, y: number, pulseScale: number, opacity: number = 1, rotation: number = 0): void {
-    // Initialize cache on first use
+    // Initialize cache on first use (fallback if prewarm wasn't called)
     if (!this.starburstCache) {
       this.initializeStarburstCache();
     }

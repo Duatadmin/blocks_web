@@ -8,12 +8,17 @@ let comboFontLoading = false;
 let scoreFontLoaded = false;
 let scoreFontLoading = false;
 
+// Promise for combo font loading (used by prewarm)
+let comboFontPromise: Promise<void> | null = null;
+
 /**
  * Lazy load the combo notification font.
  * Call this during game init - it loads async and doesn't block.
+ * Returns a promise that resolves when font is loaded (or fails).
  */
-export function loadComboFont(): void {
-  if (comboFontLoaded || comboFontLoading) return;
+export function loadComboFont(): Promise<void> {
+  if (comboFontLoaded) return Promise.resolve();
+  if (comboFontPromise) return comboFontPromise;
 
   comboFontLoading = true;
 
@@ -22,7 +27,7 @@ export function loadComboFont(): void {
     'url(/assets/fonts/TikTokSans36pt-ExtraBoldItalic.otf)'
   );
 
-  font.load()
+  comboFontPromise = font.load()
     .then((loadedFont) => {
       document.fonts.add(loadedFont);
       comboFontLoaded = true;
@@ -34,6 +39,8 @@ export function loadComboFont(): void {
     .finally(() => {
       comboFontLoading = false;
     });
+
+  return comboFontPromise;
 }
 
 /**

@@ -1,7 +1,7 @@
 // Main Game Controller
 // Orchestrates all game systems
 
-import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION, GAME_OVER_FLOW, GAME_OVER_LAYOUT, COLORS } from './data/constants';
+import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CELL_SIZE, GRID_SIZE, BLOCKS_PER_TURN, SCREEN_SHAKE, ANIMATION, BlockColor, BLOCK_COLORS, INTRO_ANIMATION, GAME_OVER_ANIMATION, GAME_OVER_FLOW, GAME_OVER_LAYOUT, COLORS, COMBO_NOTIFICATION } from './data/constants';
 import { easeOutBack, easeInQuad } from './utils/easing';
 import { Grid } from './core/Grid';
 import { Block } from './core/Block';
@@ -15,6 +15,7 @@ import { ParticleSystem } from './rendering/ParticleSystem';
 import { LineGlowManager } from './effects/LineGlowVFX';
 import { Point, pointInRect } from './utils/math';
 import { loadComboFont, loadScoreFont } from './utils/fontLoader';
+import { prewarmComboSignCache } from './rendering/ComboSign';
 
 export type GameState =
   | 'loading'
@@ -102,6 +103,14 @@ export class Game {
   private lastPlacedBlockCenter: Point | null = null;
   private displayedScore: number = 0;  // Animated score for display
   private heartPulsePhase: number = 0;  // 0 to 2π for combo heart pulsing
+  private heartPulseDelayMs: number = 0;  // Delay before heart starts pulsing (ms)
+
+  // Cached combo calculations (avoid recalculating every frame)
+  private cachedComboStreak: number = 0;
+  private cachedHeartTier: number = 0;
+
+  // Static speed multipliers (avoid array recreation every frame)
+  private static readonly HEART_SPEED_MULTIPLIERS = [0.26, 0.31, 0.36, 0.42, 0.47, 0.52, 0.57, 0.62, 0.68, 0.78];
 
   // Game over flow state
   private gameOverState: GameOverState | null = null;
@@ -141,8 +150,15 @@ export class Game {
     );
 
     // Lazy load fonts (async, will be ready when needed)
-    loadComboFont();
+    // Prewarm combo sign cache after font loads to avoid first-combo render spike
+    loadComboFont().then(() => {
+      prewarmComboSignCache(COMBO_NOTIFICATION.COMBO_FONT_SIZE, this.dpr);
+      console.log('Combo sign cache prewarmed');
+    });
     loadScoreFont();
+
+    // Prewarm starburst cache (no font dependency, can be done immediately)
+    this.renderer.prewarmStarburstCache();
 
     // Lazy load header image (async, will be ready by home screen display)
     this.renderer.loadHeaderImage();
@@ -593,6 +609,9 @@ export class Game {
   private showComboNotification(result: ComboResult): void {
     // Only show for combos (2+ consecutive line clears)
     if (result.comboStreak < 1) return;
+
+    // Delay heart pulse by 200ms to spread out expensive operations
+    this.heartPulseDelayMs = 200;
 
     const gridOrigin = this.renderer.getGridOrigin();
 
@@ -1149,12 +1168,20 @@ export class Game {
     this.lineGlowManager.update(deltaTime);
 
     // Update combo heart pulse phase (base 2Hz, speed scales with combo tier)
+    // Cache tier calculation - only update when combo changes
     const comboStreak = this.scoreManager.getComboStreak();
-    if (comboStreak >= 1) {
-      const tier = Math.min(9, Math.floor((comboStreak - 1) / 3));
-      const speedMultipliers = [0.26, 0.31, 0.36, 0.42, 0.47, 0.52, 0.57, 0.62, 0.68, 0.78];
+    if (comboStreak !== this.cachedComboStreak) {
+      this.cachedComboStreak = comboStreak;
+      this.cachedHeartTier = Math.min(9, Math.floor((comboStreak - 1) / 3));
+    }
+
+    // Handle heart pulse delay (200ms after combo notification appears)
+    if (this.heartPulseDelayMs > 0) {
+      this.heartPulseDelayMs -= deltaTime * 1000;
+    } else if (comboStreak >= 1) {
+      // Use cached tier and static multipliers (avoid array recreation)
       const baseFrequency = 2 * Math.PI * 2;  // 2Hz base = 2 pulses per second
-      this.heartPulsePhase += deltaTime * baseFrequency * speedMultipliers[tier];
+      this.heartPulsePhase += deltaTime * baseFrequency * Game.HEART_SPEED_MULTIPLIERS[this.cachedHeartTier];
       if (this.heartPulsePhase > Math.PI * 2) {
         this.heartPulsePhase -= Math.PI * 2;
       }

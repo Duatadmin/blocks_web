@@ -172,6 +172,23 @@ export class ComboSignCache {
     this.numberCache.clear();
   }
 
+  /**
+   * Pre-warm cache with common combo values (2-10) to avoid first-render spike.
+   * Call during game initialization after fonts are loaded.
+   */
+  public prewarmCache(
+    fontSize: number,
+    wordColors: ColorScheme = DEFAULT_WORD_COLORS,
+    numberColors: ColorScheme = DEFAULT_NUMBER_COLORS
+  ): void {
+    // Pre-render "Combo" word
+    this.getWordSprite('Combo', fontSize, wordColors);
+    // Pre-render common combo numbers (2-10)
+    for (let i = 2; i <= 10; i++) {
+      this.getNumberSprite(i, fontSize * LAYOUT.NUMBER_SCALE, numberColors);
+    }
+  }
+
   private prerenderWord(
     text: string,
     fontSize: number,
@@ -666,4 +683,13 @@ export function clearComboSignCache(): void {
     globalCache.clear();
     globalCache = null;
   }
+}
+
+/**
+ * Pre-warm combo sign cache with common combo values (2-10)
+ * Call during game init after fonts are loaded to avoid first-combo render spike
+ */
+export function prewarmComboSignCache(fontSize: number, dpr: number = 1): void {
+  const cache = getComboSignCache(dpr);
+  cache.prewarmCache(fontSize);
 }
