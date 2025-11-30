@@ -4,6 +4,38 @@
 import { getComboFontFamily } from '../utils/fontLoader';
 
 // ============================================================================
+// Canvas Filter Support Detection
+// Safari has ctx.filter property but silently ignores it - need runtime test
+// ============================================================================
+
+let _supportsFilter: boolean | null = null;
+
+function supportsCanvasFilter(): boolean {
+  if (_supportsFilter !== null) return _supportsFilter;
+
+  // Create a small test canvas
+  const canvas = document.createElement('canvas');
+  canvas.width = 4;
+  canvas.height = 4;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return (_supportsFilter = false);
+
+  // Draw a black pixel at top-left
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, 1, 1);
+
+  // Apply blur and redraw - if filter works, blur will spread to adjacent pixels
+  ctx.filter = 'blur(1px)';
+  ctx.fillRect(0, 0, 1, 1);
+
+  // Check if blur spread to the pixel to the right
+  const imageData = ctx.getImageData(1, 0, 1, 1);
+  const hasBlur = imageData.data[3] > 0;  // If alpha > 0, blur worked
+
+  return (_supportsFilter = hasBlur);
+}
+
+// ============================================================================
 // Public Types
 // ============================================================================
 
@@ -341,7 +373,7 @@ export class ComboSignCache {
 
   /**
    * Layer 1: Soft shadow blob beneath text
-   * Uses radial gradient for cross-browser compatibility (Safari doesn't support ctx.filter)
+   * Uses ctx.filter blur on supported browsers (Chrome/Firefox), radial gradient fallback on Safari
    */
   private renderShadowBlob(
     ctx: OffscreenCanvasRenderingContext2D,
@@ -354,41 +386,58 @@ export class ComboSignCache {
   ): void {
     const offsetY = fontSize * SHADOW.OFFSET_Y;
 
-    // Measure text to determine blob size
-    ctx.font = font;
-    const metrics = ctx.measureText(text);
-    const textWidth = metrics.width;
+    if (supportsCanvasFilter()) {
+      // ORIGINAL - ctx.filter blur (works great on Chrome/Firefox)
+      const blurRadius = fontSize * SHADOW.BLUR_RADIUS;
+      const strokeWidth = fontSize * SHADOW.STROKE_WIDTH;
 
-    // Create elliptical blob sized to cover the text
-    // The blob should be soft and diffuse, extending beyond text bounds
-    const blobRadiusX = textWidth * 0.55;  // Horizontal radius
-    const blobRadiusY = fontSize * 0.45;   // Vertical radius (flatter ellipse)
+      ctx.save();
+      ctx.filter = `blur(${blurRadius}px)`;
+      ctx.font = font;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
 
-    ctx.save();
+      // Draw thick stroke first (fills counters in letters like 4, 6, 8, 9, 0)
+      ctx.strokeStyle = shadowColor;
+      ctx.lineWidth = strokeWidth;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeText(text, x, y + offsetY);
 
-    // Use radial gradient for soft, diffuse shadow (cross-browser compatible!)
-    // Note: createRadialGradient only supports circles, so we scale to create ellipse
-    const maxRadius = Math.max(blobRadiusX, blobRadiusY);
-    const gradient = ctx.createRadialGradient(
-      x, y + offsetY, 0,         // Inner circle center
-      x, y + offsetY, maxRadius  // Outer circle radius
-    );
+      // Draw fill on top to define glyph shape
+      ctx.fillStyle = shadowColor;
+      ctx.fillText(text, x, y + offsetY);
 
-    // Fade from solid center to transparent edges for soft blur effect
-    gradient.addColorStop(0, shadowColor);
-    gradient.addColorStop(0.3, shadowColor);
-    gradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.4)');
-    gradient.addColorStop(0.85, 'rgba(0, 0, 0, 0.15)');
-    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.restore();
+    } else {
+      // FALLBACK - radial gradient (for Safari/iOS)
+      ctx.font = font;
+      const metrics = ctx.measureText(text);
+      const textWidth = metrics.width;
+      const blobRadiusX = textWidth * 0.55;
+      const blobRadiusY = fontSize * 0.45;
 
-    ctx.fillStyle = gradient;
+      ctx.save();
 
-    // Draw ellipse by scaling a circle
-    ctx.beginPath();
-    ctx.ellipse(x, y + offsetY, blobRadiusX, blobRadiusY, 0, 0, Math.PI * 2);
-    ctx.fill();
+      const maxRadius = Math.max(blobRadiusX, blobRadiusY);
+      const gradient = ctx.createRadialGradient(
+        x, y + offsetY, 0,
+        x, y + offsetY, maxRadius
+      );
 
-    ctx.restore();
+      gradient.addColorStop(0, shadowColor);
+      gradient.addColorStop(0.3, shadowColor);
+      gradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.4)');
+      gradient.addColorStop(0.85, 'rgba(0, 0, 0, 0.15)');
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.ellipse(x, y + offsetY, blobRadiusX, blobRadiusY, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
   }
 
   /**

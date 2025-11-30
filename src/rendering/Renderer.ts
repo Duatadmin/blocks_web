@@ -1,5 +1,32 @@
 // Main Renderer - Handles all canvas rendering operations
 
+// ============================================================================
+// Canvas Filter Support Detection
+// Safari has ctx.filter property but silently ignores it - need runtime test
+// ============================================================================
+
+let _supportsFilter: boolean | null = null;
+
+function supportsCanvasFilter(): boolean {
+  if (_supportsFilter !== null) return _supportsFilter;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 4;
+  canvas.height = 4;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return (_supportsFilter = false);
+
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, 1, 1);
+  ctx.filter = 'blur(1px)';
+  ctx.fillRect(0, 0, 1, 1);
+
+  const imageData = ctx.getImageData(1, 0, 1, 1);
+  const hasBlur = imageData.data[3] > 0;
+
+  return (_supportsFilter = hasBlur);
+}
+
 import {
   VIEWPORT_WIDTH,
   VIEWPORT_HEIGHT,
@@ -800,8 +827,10 @@ export class Renderer {
     ctx.save();
     ctx.translate(x, glowY);
 
-    // Note: Removed shadowBlur - rays already use createRadialGradient() for soft fading tips
-    // which is cross-browser compatible (Safari doesn't support ctx.filter)
+    // Apply blur filter on supported browsers for extra softness
+    if (supportsCanvasFilter()) {
+      ctx.filter = 'blur(6px)';
+    }
 
     // Use additive blending for all glow layers
     ctx.globalCompositeOperation = 'lighter';
