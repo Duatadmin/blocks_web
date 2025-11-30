@@ -359,7 +359,9 @@ export class ComboSignCache {
     ctx.save();
 
     // Apply blur filter - scale by DPR for consistent visual blur on high-DPI displays
-    ctx.filter = `blur(${blurRadius * this.dpr}px)`;
+    // Note: blur filter operates on physical pixels, not affected by ctx.scale()
+    // Use window.devicePixelRatio directly for reliability
+    ctx.filter = `blur(${blurRadius * (window.devicePixelRatio || 1)}px)`;
 
     ctx.font = font;
     ctx.textAlign = 'center';
