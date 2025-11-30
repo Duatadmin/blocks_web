@@ -132,7 +132,7 @@ export class Game {
     this.ctx = ctx;
   }
 
-  public init(): void {
+  public async init(): Promise<void> {
     // Initialize all systems
     this.grid = new Grid();
     this.blockGenerator = new BlockGenerator();
@@ -160,8 +160,8 @@ export class Game {
     // Prewarm starburst cache (no font dependency, can be done immediately)
     this.renderer.prewarmStarburstCache();
 
-    // Lazy load header image (async, will be ready by home screen display)
-    this.renderer.loadHeaderImage();
+    // Load header image before first render (blocks until ready)
+    await this.renderer.loadHeaderImage();
 
     // Load crown image for high score badge
     this.renderer.loadCrownImage();

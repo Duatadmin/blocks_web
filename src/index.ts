@@ -4,7 +4,7 @@
 import { Game } from './Game';
 
 // Wait for DOM to be ready
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   const loading = document.getElementById('loading');
 
@@ -23,6 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Start the game
-  game.init();
+  // Start the game (async - waits for header image to load)
+  await game.init();
 });
