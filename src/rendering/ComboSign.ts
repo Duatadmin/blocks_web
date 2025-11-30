@@ -360,11 +360,13 @@ export class ComboSignCache {
 
     // Use shadowBlur instead of ctx.filter for Safari/iOS compatibility
     // ctx.filter = 'blur()' is NOT supported on Safari!
-    // shadowBlur creates a blurred shadow behind the drawn content
-    // The crisp content will be covered by subsequent layers (extrude, outline, bevel, gloss)
+    //
+    // TRICK: Draw content off-screen but position shadow on-screen using shadowOffsetX
+    // This gives us ONLY the blurred shadow without the crisp content on top
+    const offscreenOffset = 10000;
     ctx.shadowColor = shadowColor;
     ctx.shadowBlur = blurRadius;
-    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetX = offscreenOffset;  // Shadow appears 10000px to the right of content
     ctx.shadowOffsetY = 0;
 
     ctx.font = font;
@@ -372,15 +374,16 @@ export class ComboSignCache {
     ctx.textBaseline = 'middle';
 
     // Draw thick stroke first (fills counters in letters like 4, 6, 8, 9, 0)
+    // Content is drawn 10000px to the left (off-screen), shadow appears at correct position
     ctx.strokeStyle = shadowColor;
     ctx.lineWidth = strokeWidth;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    ctx.strokeText(text, x, y + offsetY);
+    ctx.strokeText(text, x - offscreenOffset, y + offsetY);
 
     // Draw fill on top to define glyph shape
     ctx.fillStyle = shadowColor;
-    ctx.fillText(text, x, y + offsetY);
+    ctx.fillText(text, x - offscreenOffset, y + offsetY);
 
     ctx.restore();
   }
