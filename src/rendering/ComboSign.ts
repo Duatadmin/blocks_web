@@ -358,8 +358,8 @@ export class ComboSignCache {
 
     ctx.save();
 
-    // Apply blur filter
-    ctx.filter = `blur(${blurRadius}px)`;
+    // Apply blur filter - scale by DPR for consistent visual blur on high-DPI displays
+    ctx.filter = `blur(${blurRadius * this.dpr}px)`;
 
     ctx.font = font;
     ctx.textAlign = 'center';

@@ -801,7 +801,8 @@ export class Renderer {
     ctx.translate(x, glowY);
 
     // Apply blur for soft, dreamy rays (like reference image)
-    ctx.filter = 'blur(6px)';
+    // Scale by DPR for consistent visual blur on high-DPI displays
+    ctx.filter = `blur(${6 * this.dpr}px)`;
 
     // Use additive blending for all glow layers
     ctx.globalCompositeOperation = 'lighter';
