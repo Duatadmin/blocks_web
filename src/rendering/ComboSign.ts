@@ -340,8 +340,8 @@ export class ComboSignCache {
   }
 
   /**
-   * Layer 1: Shadow blob with counter-fill
-   * Critical: Uses thick stroke + fill + blur to create solid silhouette
+   * Layer 1: Soft shadow blob beneath text
+   * Uses radial gradient for cross-browser compatibility (Safari doesn't support ctx.filter)
    */
   private renderShadowBlob(
     ctx: OffscreenCanvasRenderingContext2D,
@@ -352,38 +352,41 @@ export class ComboSignCache {
     shadowColor: string,
     font: string
   ): void {
-    const blurRadius = fontSize * SHADOW.BLUR_RADIUS;
     const offsetY = fontSize * SHADOW.OFFSET_Y;
-    const strokeWidth = fontSize * SHADOW.STROKE_WIDTH;
+
+    // Measure text to determine blob size
+    ctx.font = font;
+    const metrics = ctx.measureText(text);
+    const textWidth = metrics.width;
+
+    // Create elliptical blob sized to cover the text
+    // The blob should be soft and diffuse, extending beyond text bounds
+    const blobRadiusX = textWidth * 0.55;  // Horizontal radius
+    const blobRadiusY = fontSize * 0.45;   // Vertical radius (flatter ellipse)
 
     ctx.save();
 
-    // Use shadowBlur instead of ctx.filter for Safari/iOS compatibility
-    // ctx.filter = 'blur()' is NOT supported on Safari!
-    //
-    // TRICK: Draw content off-screen but position shadow on-screen using shadowOffsetX
-    // This gives us ONLY the blurred shadow without the crisp content on top
-    const offscreenOffset = 10000;
-    ctx.shadowColor = shadowColor;
-    ctx.shadowBlur = blurRadius;
-    ctx.shadowOffsetX = offscreenOffset;  // Shadow appears 10000px to the right of content
-    ctx.shadowOffsetY = 0;
+    // Use radial gradient for soft, diffuse shadow (cross-browser compatible!)
+    // Note: createRadialGradient only supports circles, so we scale to create ellipse
+    const maxRadius = Math.max(blobRadiusX, blobRadiusY);
+    const gradient = ctx.createRadialGradient(
+      x, y + offsetY, 0,         // Inner circle center
+      x, y + offsetY, maxRadius  // Outer circle radius
+    );
 
-    ctx.font = font;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    // Fade from solid center to transparent edges for soft blur effect
+    gradient.addColorStop(0, shadowColor);
+    gradient.addColorStop(0.3, shadowColor);
+    gradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.4)');
+    gradient.addColorStop(0.85, 'rgba(0, 0, 0, 0.15)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
-    // Draw thick stroke first (fills counters in letters like 4, 6, 8, 9, 0)
-    // Content is drawn 10000px to the left (off-screen), shadow appears at correct position
-    ctx.strokeStyle = shadowColor;
-    ctx.lineWidth = strokeWidth;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.strokeText(text, x - offscreenOffset, y + offsetY);
+    ctx.fillStyle = gradient;
 
-    // Draw fill on top to define glyph shape
-    ctx.fillStyle = shadowColor;
-    ctx.fillText(text, x - offscreenOffset, y + offsetY);
+    // Draw ellipse by scaling a circle
+    ctx.beginPath();
+    ctx.ellipse(x, y + offsetY, blobRadiusX, blobRadiusY, 0, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.restore();
   }

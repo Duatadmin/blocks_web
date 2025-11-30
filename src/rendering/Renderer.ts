@@ -800,12 +800,8 @@ export class Renderer {
     ctx.save();
     ctx.translate(x, glowY);
 
-    // Use shadowBlur instead of ctx.filter for Safari/iOS compatibility
-    // ctx.filter = 'blur()' is NOT supported on Safari!
-    ctx.shadowColor = 'rgba(255, 220, 100, 0.8)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
+    // Note: Removed shadowBlur - rays already use createRadialGradient() for soft fading tips
+    // which is cross-browser compatible (Safari doesn't support ctx.filter)
 
     // Use additive blending for all glow layers
     ctx.globalCompositeOperation = 'lighter';
